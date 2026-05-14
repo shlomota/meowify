@@ -198,7 +198,7 @@ with st.sidebar:
     st.subheader("Chorus")
     full_song    = st.checkbox("Full song (skip chorus extraction)", value=False)
     chorus_start = st.number_input("Auto-detect fallback start (s)", value=45.0, step=5.0, disabled=full_song)
-    chorus_dur   = st.number_input("Duration (s)", value=30.0, step=5.0, min_value=15.0, max_value=60.0, disabled=full_song)
+    chorus_dur   = st.number_input("Duration (s)", value=45.0, step=5.0, min_value=15.0, max_value=60.0, disabled=full_song)
 
     st.subheader("Suno (kie.ai)")
     kie_key      = st.text_input("kie.ai API Key", value=env.get("KIE_API_KEY", ""), type="password")
