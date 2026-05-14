@@ -4,15 +4,13 @@
 
 ---
 
-My kids go through phases. Right now, the phase is meowing. Not just occasionally, constantly. At dinner, in the car, instead of answering questions. Full meow conversations. I've had entire exchanges where I ask "did you brush your teeth?" and receive only "meow." It's contagious too. We've all started doing it. Popular songs in our house now get sung entirely in meow, melody intact, lyrics replaced.
+My kids go through phases. Right now, it's meowing. Instead of answering questions, they meow. We've all caught it — popular songs in our house now get the full meow treatment.
 
-So naturally, I started wondering: are there actual meow covers of popular songs?
-
-A quick YouTube search led me down a rabbit hole. I found **Bongo Cat**, an internet meme turned legitimate music creator who's been putting out surprisingly polished meow covers of popular songs. There's a [meow cover of APT by ROSÉ & Bruno Mars](https://www.youtube.com/watch?v=pxISmahJ-4A) and a [meow cover of Billie Eilish's "What Was I Made For"](https://www.youtube.com/watch?v=3-y0p0GL4TI) that are genuinely impressive. The melody is intact, it's recognizable, and it's unmistakably cat.
+I was curious to see if I could find meow covers of songs they actually knew. A quick YouTube search led me to **Bongo Cat**, an internet meme turned legitimate music creator. The [meow cover of APT by ROSÉ & Bruno Mars](https://www.youtube.com/watch?v=pxISmahJ-4A) is genuinely impressive — melody intact, recognizable, and unmistakably cat.
 
 ![Bongo Cat](bongocat.png)
 
-I played them for my kids. They lost their minds.
+I played it for my kids. They lost their minds.
 
 ## How Meow Covers Used to Be Made
 
@@ -38,13 +36,15 @@ The idea is simple in theory:
 4. Replace each note with a cat meow pitched to match
 5. Feed the result to an AI that sings it back properly
 
-Simple in theory. Wildly fiddly in practice.
+Simple in theory. A bit more complex in practice.
 
 ---
 
 ## Step 1: Getting the Audio
 
 [yt-dlp](https://github.com/yt-dlp/yt-dlp) makes this straightforward. We grab audio-only, no need to download video.
+
+**One caveat:** yt-dlp can fail on popular songs, which YouTube aggressively rate-limits and bot-detects. If you hit an error, try passing cookies from a logged-in browser session (`--cookies-from-browser chrome`) or using a po-token. The yt-dlp wiki has up-to-date workarounds for the current state of YouTube's bot detection.
 
 ```python
 import yt_dlp
@@ -165,7 +165,7 @@ def detect_notes(vocals_path: str, sr: int = 44100,
     return notes
 ```
 
-**The honest caveat:** `pyin` works well for clean solo vocals, but pop productions are rarely clean. Reverb, harmonies, and compression all muddy the F0 detection. The result is an approximation, good enough to be recognizable, not good enough to be perfect. This is fine because Suno picks up the slack.
+**The honest caveat:** `pyin` works best on clean monophonic sources like a single instrument. Vocals are already harder, the human voice is less predictable than an instrument, with more vibrato, glides, and breath noise. Pop production adds another layer of difficulty on top, with reverb, stacked harmonies, and heavy compression all making pitch detection less reliable. The result is an approximation. This is fine because Suno picks up the slack.
 
 ---
 
@@ -273,7 +273,7 @@ def poll_until_done(task_id: str, kie_key: str) -> list[dict]:
         time.sleep(10)
 ```
 
-**One important note about Suno:** it has content fingerprinting that may identify and block well-known songs. If a submission gets rejected, try processing a different 30-second section or applying a small pitch shift to the audio before uploading. We handle this automatically in the app with a retry on 413 errors.
+**One important note about Suno:** it has content fingerprinting that may identify and block well-known songs. Getting past it reliably took a combination of techniques: extracting only a 30-second section, speeding the audio up slightly (1.2x by default), applying a pitch shift, suppressing the original vocals in the mix, and layering in a small amount of noise. The app applies a standard mask on the first attempt, and if that comes back with a 413 it retries automatically with heavier masking and adjusted vocal/pitch parameters.
 
 **On model quality:** Suno V5.5 produces dramatically better results than V4.5. The vocal accuracy, clarity, and the way it follows the melodic reference are all noticeably improved. Always use V5.5.
 
@@ -307,7 +307,7 @@ Here's an example of the verbose log output from a successful run:
 [23:43:41] Track 1 downloaded: output/APT_suno_1.mp3
 ```
 
-The whole pipeline from URL to finished cover takes around 2-3 minutes. Suno generates in about a minute, and the local processing (Demucs, pitch detection, mixing) takes another minute or two.
+The whole pipeline from URL to finished cover takes around 2-3 minutes. Suno generates in about a minute, and Demucs separation takes most of the rest.
 
 ---
 

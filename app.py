@@ -129,13 +129,12 @@ def s3_upload_presign(local: str, bucket: str, key: str, aws_id: str, aws_sec: s
 
 
 # ── kie.ai / Suno ─────────────────────────────────────────────────────────────
-def suno_submit(upload_url: str, kie_key: str, meow_count: int,
+def suno_submit(upload_url: str, kie_key: str, lyrics: str,
                 style: str, title: str, model: str,
                 style_weight: float | None = None,
                 audio_weight: float | None = None,
                 weirdness: float | None = None,
                 vocal_gender: str | None = None) -> dict:
-    lyrics = "[Chorus]\n" + "\n".join(["meow"] * meow_count)
     payload = {
         "uploadUrl": upload_url,
         "prompt": lyrics,
@@ -197,8 +196,9 @@ with st.sidebar:
     meow_gain   = st.slider("Meow volume", 0.0, 1.5, 0.7, 0.05)
 
     st.subheader("Chorus")
-    chorus_start = st.number_input("Auto-detect fallback start (s)", value=45.0, step=5.0)
-    chorus_dur   = st.number_input("Duration (s)", value=30.0, step=5.0, min_value=15.0, max_value=60.0)
+    full_song    = st.checkbox("Full song (skip chorus extraction)", value=False)
+    chorus_start = st.number_input("Auto-detect fallback start (s)", value=45.0, step=5.0, disabled=full_song)
+    chorus_dur   = st.number_input("Duration (s)", value=30.0, step=5.0, min_value=15.0, max_value=60.0, disabled=full_song)
 
     st.subheader("Suno (kie.ai)")
     kie_key      = st.text_input("kie.ai API Key", value=env.get("KIE_API_KEY", ""), type="password")
@@ -307,28 +307,38 @@ if run and url:
             st.error(str(e)); st.stop()
 
     # ── 4. Chorus detection + extraction ─────────────────────────────────────
-    with st.status("Detecting chorus...", expanded=True) as status:
+    step4_label = "Selecting full song..." if full_song else "Detecting chorus..."
+    with st.status(step4_label, expanded=True) as status:
         try:
-            if manual_start > 0:
-                chorus_s, reason = manual_start, f"manual override at {manual_start:.0f}s"
+            if full_song:
+                chorus_voc  = vocals_full
+                chorus_inst = inst_full
+                chorus_s    = 0.0
+                log("Full song mode — using complete separated track")
+                st.write("**Full song mode** — chorus extraction skipped")
+                status.update(label="Full song ✓", state="complete")
             else:
-                st.write("Analyzing energy profile (first 3 min)...")
-                chorus_s, reason = detect_chorus(mp3_path, default_start=chorus_start, duration=chorus_dur)
-            log(f"Chorus: {reason}")
-            st.write(f"**{chorus_s:.0f}s – {chorus_s+chorus_dur:.0f}s** — {reason}")
+                if manual_start > 0:
+                    chorus_s, reason = float(manual_start), f"manual override at {manual_start:.0f}s"
+                else:
+                    st.write("Analyzing energy profile (first 3 min)...")
+                    chorus_s, reason = detect_chorus(mp3_path, default_start=chorus_start, duration=chorus_dur)
+                log(f"Chorus: {reason}")
+                st.write(f"**{chorus_s:.0f}s – {chorus_s+chorus_dur:.0f}s** — {reason}")
 
-            chorus_voc  = os.path.join(OUTPUT_DIR, f"{base}_chorus_vocals.wav")
-            chorus_inst = os.path.join(OUTPUT_DIR, f"{base}_chorus_inst.wav")
-            extract_clip(vocals_full, chorus_s, chorus_dur, chorus_voc)
-            extract_clip(inst_full,   chorus_s, chorus_dur, chorus_inst)
-            log(f"Clips extracted: {chorus_voc}, {chorus_inst}")
-            st.session_state.files["chorus_voc"]  = chorus_voc
-            st.session_state.files["chorus_inst"] = chorus_inst
+                chorus_voc  = os.path.join(OUTPUT_DIR, f"{base}_chorus_vocals.wav")
+                chorus_inst = os.path.join(OUTPUT_DIR, f"{base}_chorus_inst.wav")
+                extract_clip(vocals_full, chorus_s, chorus_dur, chorus_voc)
+                extract_clip(inst_full,   chorus_s, chorus_dur, chorus_inst)
+                log(f"Clips extracted: {chorus_voc}, {chorus_inst}")
+                status.update(label=f"Chorus {chorus_s:.0f}s–{chorus_s+chorus_dur:.0f}s ✓", state="complete")
+
+            st.session_state.files["chorus_voc"]   = chorus_voc
+            st.session_state.files["chorus_inst"]  = chorus_inst
             st.session_state.files["chorus_start"] = chorus_s
-            status.update(label=f"Chorus {chorus_s:.0f}s–{chorus_s+chorus_dur:.0f}s ✓", state="complete")
         except Exception as e:
             log(f"ERROR: {e}")
-            status.update(label="Chorus detection failed", state="error")
+            status.update(label="Section extraction failed", state="error")
             st.error(str(e)); st.stop()
 
     # ── 5. Local meowify ─────────────────────────────────────────────────────
@@ -386,9 +396,21 @@ if run and url:
                 cover_title = f"{info['title']} (Meow Cover)"
                 terminal = {"SUCCESS", "FAILED", "ERROR", "FIRST_SUCCESS", "GENERATE_AUDIO_FAILED"}
 
+                def _meow(n): return "\n".join(["meow"] * n)
+                if full_song:
+                    suno_lyrics = (
+                        f"[Intro]\n{_meow(10)}\n\n"
+                        f"[Verse]\n{_meow(30)}\n\n"
+                        f"[Chorus]\n{_meow(30)}\n\n"
+                        f"[Verse]\n{_meow(30)}\n\n"
+                        f"[Chorus]\n{_meow(30)}"
+                    )
+                else:
+                    suno_lyrics = "[Chorus]\n" + _meow(meow_count)
+
                 def submit_and_poll(upload_url, attempt_label):
                     sub = suno_submit(
-                        upload_url, kie_key, meow_count, suno_style, cover_title, suno_model,
+                        upload_url, kie_key, suno_lyrics, suno_style, cover_title, suno_model,
                         style_weight=style_weight if style_weight > 0 else None,
                         audio_weight=audio_weight if audio_weight > 0 else None,
                         weirdness=weirdness if weirdness > 0 else None,
