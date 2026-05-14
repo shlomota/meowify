@@ -1,0 +1,25 @@
+# Python
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+
+# Environment / secrets
+.env
+
+# Generated audio
+downloads/
+work/
+output/
+cat_samples/
+
+# ML model checkpoints
+checkpoints/
+seed-vc/
+
+# macOS
+.DS_Store
+
+# IDE
+.idea/
+.claude/

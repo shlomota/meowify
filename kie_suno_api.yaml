@@ -1,0 +1,137 @@
+openapi: 3.0.1
+info:
+  title: Kie.ai Suno API
+  description: Upload and cover audio using Suno via kie.ai
+  version: 1.0.0
+servers:
+  - url: https://api.kie.ai
+    description: Production
+security:
+  - BearerAuth: []
+paths:
+  /api/v1/generate/upload-cover:
+    post:
+      summary: Upload And Cover Audio
+      description: >-
+        Creates a cover version of an audio track by transforming it into a new
+        style while retaining its core melody. Incorporates Suno's upload
+        capability. The uploadUrl must be a publicly accessible URL to the audio
+        file (max 8 minutes).
+
+        customMode=false, instrumental=false: only prompt + uploadUrl required (simplest).
+        customMode=true, instrumental=true: style + title + uploadUrl required.
+        customMode=true, instrumental=false: style + prompt + title + uploadUrl required.
+
+        Callback stages: text -> first -> complete.
+        Poll status via GET /api/v1/generate/record-info?taskId=<id> instead of callback.
+      operationId: upload-and-cover-audio
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - uploadUrl
+                - prompt
+                - customMode
+                - instrumental
+                - model
+                - callBackUrl
+              properties:
+                uploadUrl:
+                  type: string
+                  format: uri
+                  description: Publicly accessible URL of the audio file to cover (max 8 min)
+                prompt:
+                  type: string
+                  description: >-
+                    Non-custom mode: core idea, lyrics auto-generated (max 500 chars).
+                    Custom mode + instrumental=false: used as exact lyrics
+                    (V5/V5_5/V4_5*: max 5000; V4: max 3000).
+                style:
+                  type: string
+                  description: >-
+                    Required in custom mode. Music genre/style.
+                    V5/V5_5/V4_5*: max 1000 chars. V4: max 200 chars.
+                title:
+                  type: string
+                  description: >-
+                    Required in custom mode. Track title.
+                    V5/V5_5/V4_5*: max 100 chars. V4/V4_5ALL: max 80 chars.
+                customMode:
+                  type: boolean
+                  description: true = custom mode (requires style+title). false = auto mode (prompt only).
+                instrumental:
+                  type: boolean
+                  description: true = no vocals/lyrics generated.
+                model:
+                  type: string
+                  enum: [V4, V4_5, V4_5PLUS, V4_5ALL, V5, V5_5]
+                  description: >-
+                    V5_5: Custom models. V5: Superior expression, fast.
+                    V4_5PLUS: Richer sound, max 8 min. V4_5/V4_5ALL: Smart prompts, max 8 min.
+                    V4: Best vocal quality, max 4 min.
+                negativeTags:
+                  type: string
+                  description: Comma-separated styles to exclude. e.g. "Heavy Metal, Upbeat Drums"
+                callBackUrl:
+                  type: string
+                  format: uri
+                  description: POST endpoint to receive completion updates. Use task polling as alternative.
+                vocalGender:
+                  type: string
+                  enum: [m, f]
+                  description: Vocal gender preference (custom mode only). Not guaranteed.
+                styleWeight:
+                  type: number
+                  minimum: 0
+                  maximum: 1
+                  description: Style adherence strength (0-1, 2 decimal places).
+                weirdnessConstraint:
+                  type: number
+                  minimum: 0
+                  maximum: 1
+                  description: Creative deviation control (0-1, 2 decimal places).
+                audioWeight:
+                  type: number
+                  minimum: 0
+                  maximum: 1
+                  description: Balance weight for audio features (0-1, 2 decimal places).
+                personaId:
+                  type: string
+                  description: Persona ID from Generate Persona endpoint (custom mode only).
+            example:
+              uploadUrl: https://storage.example.com/audio.wav
+              prompt: A cat meowing a pop song
+              customMode: false
+              instrumental: false
+              model: V4_5
+              callBackUrl: https://api.example.com/callback
+      responses:
+        '200':
+          description: Success — returns taskId for polling
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code:
+                    type: integer
+                    description: 200=success, 401=unauthorized, 402=insufficient credits, 409=WAV exists, 413=matches existing work, 422=validation error, 429=rate limited, 500=server error
+                  msg:
+                    type: string
+                  data:
+                    type: object
+                    properties:
+                      taskId:
+                        type: string
+                        description: Use with GET /api/v1/generate/record-info?taskId= to poll status
+        '500':
+          description: Server error
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      description: Get your API key at https://kie.ai/api-key. Set header: Authorization: Bearer YOUR_API_KEY

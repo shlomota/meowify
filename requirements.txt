@@ -1,0 +1,11 @@
+yt-dlp
+demucs
+librosa
+soundfile
+scipy
+numpy
+pydub
+streamlit
+torchcodec
+boto3
+requests
