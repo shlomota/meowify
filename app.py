@@ -393,7 +393,9 @@ if run and url:
         with st.status("Generating Suno cover...", expanded=True) as status:
             try:
                 import json as _json
-                cover_title = f"{info['title']} (Meow Cover)"
+                _suffix = " (Meow Cover)"
+                _max = 100 - len(_suffix)
+                cover_title = info['title'][:_max] + _suffix
                 terminal = {"SUCCESS", "FAILED", "ERROR", "FIRST_SUCCESS", "GENERATE_AUDIO_FAILED"}
 
                 def _meow(n): return "\n".join(["meow"] * n)
