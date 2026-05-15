@@ -1,14 +1,18 @@
 import contextlib
 import io
+import json as _json
 import os
 import sys
 import subprocess
+import threading
 import time
-import numpy as np
-import librosa
-import soundfile as sf
-import requests
+import uuid
+
 import boto3
+import librosa
+import numpy as np
+import requests
+import soundfile as sf
 import streamlit as st
 from pathlib import Path
 from scipy import signal as sig
@@ -23,6 +27,13 @@ CAT_REF = "cat_samples/separated/htdemucs/cat_meow_ref_trim/vocals_10s.wav"
 S3_BUCKET_DEFAULT = "sagemaker-us-east-1-478706476061"
 S3_REGION = "us-east-1"
 KIE_BASE = "https://api.kie.ai"
+SITE_URL = "https://meowify.click"
+SES_SENDER = "noreply@meowify.click"
+NOTIFY_EMAIL = "stannor@gmail.com"
+
+# ── Jobs (shared across all Streamlit sessions in this process) ───────────────
+JOBS: dict = {}
+
 
 # ── Env ───────────────────────────────────────────────────────────────────────
 def load_env() -> dict:
@@ -35,19 +46,15 @@ def load_env() -> dict:
                 env[k.strip()] = v.strip()
     return env
 
+
 # ── Chorus detection ─────────────────────────────────────────────────────────
 def detect_chorus(audio_path: str, default_start: float = 45.0, duration: float = 30.0) -> tuple[float, str]:
-    """
-    Find best 30-40s section for the first chorus using RMS energy.
-    Searches 30-90s range; falls back to default_start if nothing beats it by >15%.
-    """
     y, sr = librosa.load(audio_path, sr=22050, mono=True, duration=180.0)
     total = len(y) / sr
 
     if total < default_start + duration:
         return 0.0, "track too short — using 0s"
 
-    # 1-second RMS hops
     rms = librosa.feature.rms(y=y, frame_length=sr * 2, hop_length=sr)[0]
     w = int(duration)
     def_idx = int(default_start)
@@ -176,6 +183,263 @@ def dl_file(url: str, dst: str) -> str:
     return dst
 
 
+# ── Email ─────────────────────────────────────────────────────────────────────
+def send_result_email(title: str, tracks: list, job_url: str, aws_id: str, aws_sec: str):
+    client = boto3.client("ses", region_name="us-east-1",
+                          aws_access_key_id=aws_id, aws_secret_access_key=aws_sec)
+    track_lines = "\n".join(f"  - {t['title']}" for t in tracks) if tracks else "  (none)"
+    body = (
+        f'Your meow cover of "{title}" is ready!\n\n'
+        f"{len(tracks)} track(s) generated:\n{track_lines}\n\n"
+        f"Listen and download here:\n{job_url}\n\n"
+        "-- Meowify"
+    )
+    client.send_email(
+        Source=SES_SENDER,
+        Destination={"ToAddresses": [NOTIFY_EMAIL]},
+        Message={
+            "Subject": {"Data": f"Meowify: {title[:60]} is ready!"},
+            "Body": {"Text": {"Data": body}},
+        },
+    )
+
+
+# ── Background pipeline ───────────────────────────────────────────────────────
+def run_pipeline(job_id: str, url: str, params: dict):
+    job = JOBS[job_id]
+
+    def log(msg: str):
+        job["logs"].append(f"[{time.strftime('%H:%M:%S')}] {msg}")
+
+    def step(label: str):
+        job["step"] = label
+        log(f"--- {label} ---")
+
+    try:
+        os.makedirs(OUTPUT_DIR, exist_ok=True)
+        os.makedirs(WORK_DIR, exist_ok=True)
+
+        # 1. Video info
+        step("Fetching video info...")
+        info = get_video_info(url)
+        job["video_info"] = info
+        log(f"Title: {info['title']}")
+        log(f"Duration: {info['duration']}s")
+
+        # 2. Download
+        step("Downloading audio...")
+        mp3_path = download_youtube_as_mp3(url)
+        size_mb = os.path.getsize(mp3_path) / 1e6
+        log(f"Downloaded: {mp3_path} ({size_mb:.1f} MB)")
+        job["files"]["mp3"] = mp3_path
+
+        # 3. Chorus / clip selection
+        base = os.path.splitext(os.path.basename(mp3_path))[0]
+        full_song  = params["full_song"]
+        chorus_dur = params["chorus_dur"]
+
+        step("Selecting section...")
+        if full_song:
+            chorus_s   = 0.0
+            clip_input = mp3_path
+            clip_base  = base
+            log("Full song mode — using complete track")
+        else:
+            manual_start = params["manual_start"]
+            if manual_start > 0:
+                chorus_s = float(manual_start)
+                reason   = f"manual override at {manual_start:.0f}s"
+            else:
+                chorus_s, reason = detect_chorus(mp3_path,
+                                                 default_start=params["chorus_start"],
+                                                 duration=chorus_dur)
+            log(f"Chorus: {reason}")
+            clip_base  = f"{base}_clip_{int(chorus_s)}s"
+            clip_input = os.path.join(OUTPUT_DIR, f"{clip_base}.wav")
+            extract_clip(mp3_path, chorus_s, chorus_dur, clip_input)
+            log(f"Clip saved: {clip_input}")
+        job["files"]["chorus_start"] = chorus_s
+
+        # 4. Demucs on clip only
+        chorus_voc  = os.path.join(WORK_DIR, "htdemucs", clip_base, "vocals.wav")
+        chorus_inst = os.path.join(WORK_DIR, "htdemucs", clip_base, "no_vocals.wav")
+
+        step("Separating vocals (Demucs)...")
+        if os.path.exists(chorus_voc):
+            log("Using cached Demucs output")
+        else:
+            log("Running Demucs htdemucs --two-stems vocals...")
+            cmd = [sys.executable, "-m", "demucs", "--two-stems", "vocals",
+                   "-n", "htdemucs", "--out", WORK_DIR, clip_input]
+            result = subprocess.run(cmd, capture_output=True, text=True)
+            for line in (result.stdout + result.stderr).splitlines():
+                if line.strip():
+                    log(line)
+            if result.returncode != 0:
+                raise RuntimeError(result.stderr[-800:])
+        job["files"]["chorus_voc"]  = chorus_voc
+        job["files"]["chorus_inst"] = chorus_inst
+
+        # 5. Local meowify
+        step("Local meowify (note replacement)...")
+        meow_local = os.path.join(OUTPUT_DIR, f"{base}_meowified.wav")
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            meowify_v2(
+                vocals_path=chorus_voc,
+                instrumental_path=chorus_inst,
+                meow_ref_path=CAT_REF,
+                output_path=meow_local,
+                inst_pitch_semitones=float(params["inst_pitch"]),
+                vocal_pitch_semitones=float(params["vocal_pitch"]),
+                speed_factor=params["speed"],
+                inst_gain=params["inst_gain"],
+                vocal_gain=params["vocal_gain"],
+                meow_gain=params["meow_gain"],
+            )
+        for line in buf.getvalue().splitlines():
+            log(line)
+        job["files"]["meow_local"] = meow_local
+
+        # 6-8. Masking → S3 → Suno
+        kie_key = params["kie_key"]
+        aws_id  = params["aws_id"]
+        aws_sec = params["aws_sec"]
+        s3_bucket = params["s3_bucket"]
+
+        if kie_key and aws_id and aws_sec:
+            step("Masking + uploading to S3...")
+            masked = os.path.join(OUTPUT_DIR, f"{base}_meowified_masked.wav")
+            apply_masking(meow_local, masked)
+            job["files"]["masked"] = masked
+            log(f"EQ + noise masking → {masked}")
+            s3_key = f"meowify/{base}_meowified_masked.wav"
+            presigned_url = s3_upload_presign(masked, s3_bucket, s3_key, aws_id, aws_sec)
+            log(f"Uploaded s3://{s3_bucket}/{s3_key}")
+
+            _suffix = " (Meow Cover)"
+            cover_title = info["title"][: 100 - len(_suffix)] + _suffix
+            terminal = {"SUCCESS", "FAILED", "ERROR", "FIRST_SUCCESS", "GENERATE_AUDIO_FAILED"}
+
+            def _meow(n): return "\n".join(["meow"] * n)
+            if full_song:
+                suno_lyrics = (
+                    f"[Intro]\n{_meow(10)}\n\n"
+                    f"[Verse]\n{_meow(30)}\n\n"
+                    f"[Chorus]\n{_meow(30)}\n\n"
+                    f"[Verse]\n{_meow(30)}\n\n"
+                    f"[Chorus]\n{_meow(30)}"
+                )
+            else:
+                suno_lyrics = "[Chorus]\n" + _meow(params["meow_count"])
+
+            def submit_and_poll_bg(upload_url, attempt_label):
+                sub = suno_submit(
+                    upload_url, kie_key, suno_lyrics,
+                    params["suno_style"], cover_title, params["suno_model"],
+                    style_weight=params["style_weight"] if params["style_weight"] > 0 else None,
+                    audio_weight=params["audio_weight"] if params["audio_weight"] > 0 else None,
+                    weirdness=params["weirdness"]       if params["weirdness"]    > 0 else None,
+                    vocal_gender=params["vocal_gender"] if params["vocal_gender"] != "(none)" else None,
+                )
+                task_id = sub["taskId"]
+                log(f"Suno task submitted ({attempt_label}): {task_id}")
+                t0 = time.time()
+                while True:
+                    r = requests.get(
+                        f"{KIE_BASE}/api/v1/generate/record-info",
+                        params={"taskId": task_id},
+                        headers={"Authorization": f"Bearer {kie_key}"},
+                        timeout=30,
+                    )
+                    data = r.json()["data"]
+                    s = data["status"]
+                    elapsed = time.time() - t0
+                    job["step"] = f"Suno cover — {s} ({elapsed:.0f}s)..."
+                    log(f"Suno poll ({attempt_label}): {s} ({elapsed:.0f}s)")
+                    if s in terminal:
+                        return sub["payload"], data, s
+                    if elapsed > 600:
+                        raise TimeoutError("Suno timed out after 10 min")
+                    time.sleep(10)
+
+            step("Generating Suno cover (5-10 min)...")
+            suno_payload, suno_data, suno_status = submit_and_poll_bg(presigned_url, "attempt 1")
+            job["files"]["suno_payload"] = suno_payload
+
+            # Auto-retry with heavy masking on 413 fingerprint detection
+            if suno_status not in {"SUCCESS", "FIRST_SUCCESS"} and suno_data.get("errorCode") == 413:
+                log("413 fingerprint detected — retrying with heavy masking + pitch shift")
+                meow_retry = os.path.join(OUTPUT_DIR, f"{base}_meowified_retry.wav")
+                meowify_v2(
+                    vocals_path=chorus_voc,
+                    instrumental_path=chorus_inst,
+                    meow_ref_path=CAT_REF,
+                    output_path=meow_retry,
+                    inst_pitch_semitones=float(params["inst_pitch"]) + 2.0,
+                    vocal_pitch_semitones=float(params["vocal_pitch"]) + 2.0,
+                    speed_factor=params["speed"],
+                    inst_gain=params["inst_gain"],
+                    vocal_gain=0.35,
+                    meow_gain=params["meow_gain"],
+                )
+                job["files"]["meow_retry"] = meow_retry
+                heavy_masked = os.path.join(OUTPUT_DIR, f"{base}_meowified_heavy.wav")
+                apply_masking(meow_retry, heavy_masked, heavy=True)
+                job["files"]["heavy_masked"] = heavy_masked
+                heavy_s3_key = f"meowify/{base}_meowified_heavy.wav"
+                heavy_url = s3_upload_presign(heavy_masked, s3_bucket, heavy_s3_key, aws_id, aws_sec)
+                log(f"Uploaded heavy-masked retry: {heavy_s3_key}")
+                suno_payload, suno_data, suno_status = submit_and_poll_bg(heavy_url, "attempt 2 (heavy mask)")
+                job["files"]["suno_payload"] = suno_payload
+
+            if suno_status not in {"SUCCESS", "FIRST_SUCCESS"}:
+                error_code = suno_data.get("errorCode")
+                error_msg  = suno_data.get("errorMessage")
+                tracks_raw = (suno_data.get("response") or {}).get("sunoData") or []
+                lines = [f"Status: {suno_status}"]
+                if error_code:
+                    lines.append(f"Error code: {error_code}")
+                if error_msg:
+                    lines.append(f"Error message: {error_msg}")
+                for t in tracks_raw:
+                    if t and t.get("errorMessage"):
+                        lines.append(f"Track error: {t['errorMessage']}")
+                lines.append(f"Full response:\n```json\n{_json.dumps(suno_data, indent=2)}\n```")
+                job["suno_error"] = "\n\n".join(lines)
+                log(f"Suno failed: {suno_status}")
+            else:
+                tracks = (suno_data.get("response") or {}).get("sunoData") or []
+                log(f"Suno complete: {len(tracks)} tracks")
+                for i, track in enumerate(tracks, 1):
+                    audio_url = track.get("audioUrl") or track.get("streamAudioUrl", "")
+                    if not audio_url:
+                        continue
+                    out = os.path.join(OUTPUT_DIR, f"{base}_suno_{i}.mp3")
+                    dl_file(audio_url, out)
+                    job["suno_tracks"].append({"path": out, "title": track.get("title", f"Track {i}")})
+                    log(f"Track {i}: {out}")
+
+        job["status"] = "done"
+        job["step"]   = "Complete"
+        log("Pipeline complete")
+
+        # Send notification email
+        if aws_id and aws_sec:
+            try:
+                job_url = f"{SITE_URL}/?job={job_id}"
+                send_result_email(info["title"], job["suno_tracks"], job_url, aws_id, aws_sec)
+                log(f"Notification email sent to {NOTIFY_EMAIL}")
+            except Exception as e:
+                log(f"Email failed (non-fatal): {e}")
+
+    except Exception as e:
+        job["status"] = "error"
+        job["error"]  = str(e)
+        job["step"]   = f"Error: {e}"
+        job["logs"].append(f"[{time.strftime('%H:%M:%S')}] FATAL: {e}")
+
+
 # ── Page config ───────────────────────────────────────────────────────────────
 st.set_page_config(page_title="Meowify", page_icon="🐱", layout="wide")
 
@@ -183,8 +447,7 @@ env = load_env()
 
 # ── Auth ──────────────────────────────────────────────────────────────────────
 _NO_LOGIN = "--no-login" in sys.argv
-
-_BANNER = "https://cdn-images-1.medium.com/v2/resize:fit:800/1*0yOLabnolhlZDzShFH2vdg.png"
+_BANNER   = "https://cdn-images-1.medium.com/v2/resize:fit:800/1*0yOLabnolhlZDzShFH2vdg.png"
 
 if not _NO_LOGIN and not st.session_state.get("logged_in"):
     st.image(_BANNER, width=600)
@@ -232,368 +495,153 @@ with st.sidebar:
     weirdness    = st.slider("Weirdness (0=off)", 0.0, 1.0, 0.0, 0.05)
 
     st.subheader("AWS S3")
-    aws_id      = st.text_input("Access Key ID",     value=env.get("AWS_ACCESS_KEY_ID", ""),     type="password")
-    aws_sec     = st.text_input("Secret Access Key", value=env.get("AWS_SECRET_ACCESS_KEY", ""), type="password")
-    s3_bucket   = st.text_input("Bucket", value=S3_BUCKET_DEFAULT)
+    aws_id    = st.text_input("Access Key ID",     value=env.get("AWS_ACCESS_KEY_ID", ""),     type="password")
+    aws_sec   = st.text_input("Secret Access Key", value=env.get("AWS_SECRET_ACCESS_KEY", ""), type="password")
+    s3_bucket = st.text_input("Bucket", value=S3_BUCKET_DEFAULT)
 
-# ── Session state ─────────────────────────────────────────────────────────────
-for k, default in [("logs", []), ("files", {}), ("suno_tracks", []), ("video_info", None), ("source_url", "")]:
-    if k not in st.session_state:
-        st.session_state[k] = default
 
-# ── Input ─────────────────────────────────────────────────────────────────────
-_col_url, _col_start = st.columns([4, 1])
-url = _col_url.text_input("YouTube URL", placeholder="https://www.youtube.com/watch?v=...")
-manual_start = _col_start.number_input("Start time (s)", value=0, step=5, min_value=0, help="Leave 0 to auto-detect chorus")
-run = st.button("Meowify! 🐾", type="primary")
+# ── Results renderer (used by both live-poll view and cached view) ─────────────
+def show_results(job: dict):
+    info  = job.get("video_info") or {}
+    files = job.get("files", {})
 
-# ── Pipeline ──────────────────────────────────────────────────────────────────
-if run and url:
-    st.session_state.logs = []
-    st.session_state.files = {}
-    st.session_state.suno_tracks = []
-    st.session_state.video_info = None
-    st.session_state.source_url = url
-    os.makedirs(OUTPUT_DIR, exist_ok=True)
-    os.makedirs(WORK_DIR, exist_ok=True)
+    if job.get("suno_error"):
+        st.error(job["suno_error"])
 
-    def log(msg: str):
-        ts = time.strftime("%H:%M:%S")
-        entry = f"[{ts}] {msg}"
-        st.session_state.logs.append(entry)
-
-    # ── 1. Video info ─────────────────────────────────────────────────────────
-    with st.status("Fetching video info...", expanded=True) as status:
-        try:
-            info = get_video_info(url)
-            st.session_state.video_info = info
-            log(f"Title: {info['title']}")
-            log(f"Duration: {info['duration']}s")
-            c1, c2 = st.columns([1, 3])
-            with c1:
-                if info.get("thumbnail_url"):
-                    st.image(info["thumbnail_url"])
-            with c2:
-                st.markdown(f"### {info['title']}")
-                st.caption(f"{info['duration']}s")
-            status.update(label=f"Video: {info['title']} ✓", state="complete")
-        except Exception as e:
-            log(f"ERROR: {e}")
-            status.update(label="Video info failed", state="error")
-            st.error(str(e)); st.stop()
-
-    # ── 2. Download ───────────────────────────────────────────────────────────
-    with st.status("Downloading audio...", expanded=True) as status:
-        try:
-            mp3_path = download_youtube_as_mp3(url)
-            size_mb = os.path.getsize(mp3_path) / 1e6
-            log(f"Downloaded: {mp3_path} ({size_mb:.1f} MB)")
-            st.write(f"`{os.path.basename(mp3_path)}` — {size_mb:.1f} MB")
-            st.session_state.files["mp3"] = mp3_path
-            status.update(label="Download complete ✓", state="complete")
-        except Exception as e:
-            log(f"ERROR: {e}")
-            status.update(label="Download failed", state="error")
-            st.error(str(e)); st.stop()
-
-    # ── 3. Chorus detection → cut clip from mp3 ──────────────────────────────
-    base = os.path.splitext(os.path.basename(mp3_path))[0]
-    step3_label = "Selecting full song..." if full_song else "Detecting chorus..."
-    with st.status(step3_label, expanded=True) as status:
-        try:
-            if full_song:
-                chorus_s   = 0.0
-                clip_input = mp3_path
-                clip_base  = base
-                log("Full song mode — using complete track")
-                st.write("**Full song mode** — processing full track")
-            else:
-                if manual_start > 0:
-                    chorus_s, reason = float(manual_start), f"manual override at {manual_start:.0f}s"
-                else:
-                    st.write("Analyzing energy profile (first 3 min)...")
-                    chorus_s, reason = detect_chorus(mp3_path, default_start=chorus_start, duration=chorus_dur)
-                log(f"Chorus: {reason}")
-                st.write(f"**{chorus_s:.0f}s – {chorus_s+chorus_dur:.0f}s** — {reason}")
-                clip_base  = f"{base}_clip_{int(chorus_s)}s"
-                clip_input = os.path.join(OUTPUT_DIR, f"{clip_base}.wav")
-                extract_clip(mp3_path, chorus_s, chorus_dur, clip_input)
-                log(f"Clip saved: {clip_input}")
-            st.session_state.files["chorus_start"] = chorus_s
-            status.update(label="Full song ✓" if full_song else f"Chorus {chorus_s:.0f}s–{chorus_s+chorus_dur:.0f}s ✓", state="complete")
-        except Exception as e:
-            log(f"ERROR: {e}")
-            status.update(label="Section detection failed", state="error")
-            st.error(str(e)); st.stop()
-
-    # ── 4. Demucs on clip only ────────────────────────────────────────────────
-    chorus_voc  = os.path.join(WORK_DIR, "htdemucs", clip_base, "vocals.wav")
-    chorus_inst = os.path.join(WORK_DIR, "htdemucs", clip_base, "no_vocals.wav")
-
-    with st.status("Separating vocals (Demucs)...", expanded=True) as status:
-        try:
-            if os.path.exists(chorus_voc):
-                log("Using cached Demucs output")
-                st.write("Using cached separation output")
-            else:
-                st.write("Running Demucs on clip — this takes about a minute...")
-                log("Starting Demucs htdemucs --two-stems vocals")
-                cmd = [sys.executable, "-m", "demucs", "--two-stems", "vocals",
-                       "-n", "htdemucs", "--out", WORK_DIR, clip_input]
-                result = subprocess.run(cmd, capture_output=True, text=True)
-                for line in (result.stdout + result.stderr).splitlines():
-                    if line.strip():
-                        log(line)
-                if result.returncode != 0:
-                    raise RuntimeError(result.stderr[-800:])
-            st.session_state.files["chorus_voc"]  = chorus_voc
-            st.session_state.files["chorus_inst"] = chorus_inst
-            log(f"Vocals: {chorus_voc}")
-            log(f"Instrumental: {chorus_inst}")
-            status.update(label="Vocals separated ✓", state="complete")
-        except Exception as e:
-            log(f"ERROR: {e}")
-            status.update(label="Separation failed", state="error")
-            st.error(str(e)); st.stop()
-
-    # ── 5. Local meowify ─────────────────────────────────────────────────────
-    meow_local = os.path.join(OUTPUT_DIR, f"{base}_meowified.wav")
-    with st.status("Local meowify (note replacement)...", expanded=True) as status:
-        try:
-            st.write("Detecting notes and placing meow samples...")
-            buf = io.StringIO()
-            with contextlib.redirect_stdout(buf):
-                meowify_v2(
-                    vocals_path=chorus_voc,
-                    instrumental_path=chorus_inst,
-                    meow_ref_path=CAT_REF,
-                    output_path=meow_local,
-                    inst_pitch_semitones=float(inst_pitch),
-                    vocal_pitch_semitones=float(vocal_pitch),
-                    speed_factor=speed,
-                    inst_gain=inst_gain,
-                    vocal_gain=vocal_gain,
-                    meow_gain=meow_gain,
-                )
-            for line in buf.getvalue().splitlines():
-                log(line)
-                st.write(line)
-            st.session_state.files["meow_local"] = meow_local
-            status.update(label="Local meowify ✓", state="complete")
-        except Exception as e:
-            log(f"Local meowify error (continuing): {e}")
-            status.update(label=f"Local meowify failed (continuing)", state="error")
-            st.warning(str(e))
-
-    # ── 6-8. Masking → S3 → Suno ─────────────────────────────────────────────
-    if kie_key and aws_id and aws_sec:
-
-        with st.status("Masking + uploading to S3...", expanded=True) as status:
-            try:
-                masked = os.path.join(OUTPUT_DIR, f"{base}_meowified_masked.wav")
-                apply_masking(meow_local, masked)
-                st.session_state.files["masked"] = masked
-                log(f"EQ + noise masking applied → {masked}")
-                st.write("EQ reshape + noise applied to meowified WAV")
-                s3_key = f"meowify/{base}_meowified_masked.wav"
-                presigned_url = s3_upload_presign(masked, s3_bucket, s3_key, aws_id, aws_sec)
-                log(f"Uploaded: s3://{s3_bucket}/{s3_key} (presigned URL valid 2h)")
-                st.write(f"Uploaded `{s3_key}`")
-                status.update(label="Masked + uploaded to S3 ✓", state="complete")
-            except Exception as e:
-                log(f"ERROR: {e}")
-                status.update(label="S3 upload failed", state="error")
-                st.error(str(e)); st.stop()
-
-        with st.status("Generating Suno cover...", expanded=True) as status:
-            try:
-                import json as _json
-                _suffix = " (Meow Cover)"
-                _max = 100 - len(_suffix)
-                cover_title = info['title'][:_max] + _suffix
-                terminal = {"SUCCESS", "FAILED", "ERROR", "FIRST_SUCCESS", "GENERATE_AUDIO_FAILED"}
-
-                def _meow(n): return "\n".join(["meow"] * n)
-                if full_song:
-                    suno_lyrics = (
-                        f"[Intro]\n{_meow(10)}\n\n"
-                        f"[Verse]\n{_meow(30)}\n\n"
-                        f"[Chorus]\n{_meow(30)}\n\n"
-                        f"[Verse]\n{_meow(30)}\n\n"
-                        f"[Chorus]\n{_meow(30)}"
-                    )
-                else:
-                    suno_lyrics = "[Chorus]\n" + _meow(meow_count)
-
-                def submit_and_poll(upload_url, attempt_label):
-                    sub = suno_submit(
-                        upload_url, kie_key, suno_lyrics, suno_style, cover_title, suno_model,
-                        style_weight=style_weight if style_weight > 0 else None,
-                        audio_weight=audio_weight if audio_weight > 0 else None,
-                        weirdness=weirdness if weirdness > 0 else None,
-                        vocal_gender=vocal_gender if vocal_gender != "(none)" else None,
-                    )
-                    task_id = sub["taskId"]
-                    log(f"Suno task submitted ({attempt_label}): {task_id}")
-                    st.write(f"Task ID ({attempt_label}): `{task_id}`")
-                    poll_slot = st.empty()
-                    t0 = time.time()
-                    while True:
-                        r = requests.get(
-                            f"{KIE_BASE}/api/v1/generate/record-info",
-                            params={"taskId": task_id},
-                            headers={"Authorization": f"Bearer {kie_key}"},
-                            timeout=30,
-                        )
-                        data = r.json()["data"]
-                        s = data["status"]
-                        elapsed = time.time() - t0
-                        poll_slot.write(f"Status ({attempt_label}): **{s}** — {elapsed:.0f}s elapsed")
-                        log(f"Suno poll ({attempt_label}): {s} ({elapsed:.0f}s)")
-                        if s in terminal:
-                            return sub["payload"], data, s
-                        if elapsed > 600:
-                            raise TimeoutError("Suno timed out after 10 min")
-                        time.sleep(10)
-
-                # First attempt
-                suno_payload, suno_data, suno_status = submit_and_poll(presigned_url, "attempt 1")
-                st.session_state.files["suno_payload"] = suno_payload
-
-                # Auto-retry with heavy masking on 413
-                if suno_status not in {"SUCCESS", "FIRST_SUCCESS"} and suno_data.get("errorCode") == 413:
-                    st.write("Fingerprint detected (413) — re-mixing with lower vocals, +2 semitones, heavy masking...")
-                    log("413 detected — re-running meowify with vocal_gain=0.35, +2st, then heavy masking")
-                    meow_retry = os.path.join(OUTPUT_DIR, f"{base}_meowified_retry.wav")
-                    meowify_v2(
-                        vocals_path=chorus_voc,
-                        instrumental_path=chorus_inst,
-                        meow_ref_path=CAT_REF,
-                        output_path=meow_retry,
-                        inst_pitch_semitones=float(inst_pitch) + 2.0,
-                        vocal_pitch_semitones=float(vocal_pitch) + 2.0,
-                        speed_factor=speed,
-                        inst_gain=inst_gain,
-                        vocal_gain=0.35,
-                        meow_gain=meow_gain,
-                    )
-                    st.session_state.files["meow_retry"] = meow_retry
-                    heavy_masked = os.path.join(OUTPUT_DIR, f"{base}_meowified_heavy.wav")
-                    apply_masking(meow_retry, heavy_masked, heavy=True)
-                    st.session_state.files["heavy_masked"] = heavy_masked
-                    heavy_s3_key = f"meowify/{base}_meowified_heavy.wav"
-                    heavy_url = s3_upload_presign(heavy_masked, s3_bucket, heavy_s3_key, aws_id, aws_sec)
-                    log(f"Uploaded heavy-masked retry: s3://{s3_bucket}/{heavy_s3_key}")
-                    suno_payload, suno_data, suno_status = submit_and_poll(heavy_url, "attempt 2 (heavy mask)")
-                    st.session_state.files["suno_payload"] = suno_payload
-
-                if suno_status not in {"SUCCESS", "FIRST_SUCCESS"}:
-                    error_code = suno_data.get("errorCode")
-                    error_msg  = suno_data.get("errorMessage")
-                    tracks_raw = (suno_data.get("response") or {}).get("sunoData") or []
-                    detail_lines = [f"Status: `{suno_status}`"]
-                    if error_code:
-                        detail_lines.append(f"Error code: `{error_code}`")
-                    if error_msg:
-                        detail_lines.append(f"Error message: {error_msg}")
-                    for t in tracks_raw:
-                        if t and t.get("errorMessage"):
-                            detail_lines.append(f"Track error: {t['errorMessage']}")
-                    detail_lines.append(f"Full response:\n```json\n{_json.dumps(suno_data, indent=2)}\n```")
-                    raise RuntimeError("\n\n".join(detail_lines))
-
-                tracks = (suno_data.get("response") or {}).get("sunoData") or []
-                log(f"Suno complete: {len(tracks)} tracks")
-                for i, track in enumerate(tracks, 1):
-                    audio_url = track.get("audioUrl") or track.get("streamAudioUrl", "")
-                    if not audio_url:
-                        continue
-                    out = os.path.join(OUTPUT_DIR, f"{base}_suno_{i}.mp3")
-                    dl_file(audio_url, out)
-                    st.session_state.suno_tracks.append({"path": out, "title": track.get("title", f"Track {i}")})
-                    log(f"Track {i} downloaded: {out}")
-
-                status.update(label=f"Suno cover complete ✓ ({len(tracks)} tracks)", state="complete")
-                st.balloons()
-
-            except Exception as e:
-                log(f"Suno ERROR: {e}")
-                status.update(label="Suno generation failed", state="error")
-                st.session_state.files["suno_error"] = str(e)
-
-    else:
-        st.info("Add kie.ai and AWS keys in the sidebar to enable Suno cover generation.")
-
-# ── Results (persistent across reruns) ───────────────────────────────────────
-if st.session_state.get("video_info"):
-    st.divider()
-    info = st.session_state.video_info
-    st.subheader(f"Results — {info['title']}")
-
-    files = st.session_state.files
-
-    # Suno error (shown outside collapsed status block so it's always visible)
-    suno_error = st.session_state.files.get("suno_error")
-    if suno_error:
-        st.error(suno_error)
-
-    # Suno tracks (primary result)
-    if st.session_state.suno_tracks:
-        for i, track in enumerate(st.session_state.suno_tracks, 1):
+    if job.get("suno_tracks"):
+        for i, track in enumerate(job["suno_tracks"], 1):
             path = track["path"]
             if os.path.exists(path):
                 st.markdown(f"**Track {i}: {track['title']}**")
                 st.audio(path, format="audio/mpeg")
                 with open(path, "rb") as f:
                     st.download_button(
-                        f"Download track {i}",
-                        f, file_name=os.path.basename(path),
+                        f"Download track {i}", f,
+                        file_name=os.path.basename(path),
                         mime="audio/mpeg",
                         key=f"suno_{i}",
                     )
 
-    # Intermediate files
     intermediates = [
-        ("Downloaded MP3",        "mp3",         "song.mp3",                "audio/mpeg"),
-        ("Clip — vocals",         "chorus_voc",  "clip_vocals.wav",         "audio/wav"),
-        ("Clip — instrumental",   "chorus_inst", "clip_instrumental.wav",   "audio/wav"),
-        ("Local meowified",              "meow_local",   "meowified_local.wav",        "audio/wav"),
-        ("Attempt 1 — masked",          "masked",       "meowified_masked.wav",       "audio/wav"),
-        ("Attempt 2 — remix (+2st)",    "meow_retry",   "meowified_retry.wav",        "audio/wav"),
-        ("Attempt 2 — heavy masked",    "heavy_masked", "meowified_heavy_masked.wav", "audio/wav"),
+        ("Downloaded MP3",              "mp3",         "song.mp3",                  "audio/mpeg"),
+        ("Clip — vocals",               "chorus_voc",  "clip_vocals.wav",           "audio/wav"),
+        ("Clip — instrumental",         "chorus_inst", "clip_instrumental.wav",     "audio/wav"),
+        ("Local meowified",             "meow_local",  "meowified_local.wav",       "audio/wav"),
+        ("Attempt 1 — masked",          "masked",      "meowified_masked.wav",      "audio/wav"),
+        ("Attempt 2 — remix (+2st)",    "meow_retry",  "meowified_retry.wav",       "audio/wav"),
+        ("Attempt 2 — heavy masked",    "heavy_masked","meowified_heavy_masked.wav","audio/wav"),
     ]
     available = [(lbl, k, fn, mime) for lbl, k, fn, mime in intermediates
-                 if files.get(k) and os.path.exists(files[k])]
-
+                 if files.get(k) and os.path.exists(str(files[k]))]
     if available:
         with st.expander("Intermediate files", expanded=False):
             cols = st.columns(min(3, len(available)))
             for i, (lbl, k, fn, mime) in enumerate(available):
-                path = files[k]
                 with cols[i % 3]:
                     st.caption(lbl)
-                    st.audio(path, format=mime)
-                    with open(path, "rb") as f:
-                        st.download_button(f"Download", f, file_name=fn, mime=mime, key=f"int_{k}")
+                    st.audio(str(files[k]), format=mime)
+                    with open(str(files[k]), "rb") as f:
+                        st.download_button("Download", f, file_name=fn, mime=mime, key=f"int_{k}")
 
-    # Original video link at detected chorus timestamp
     chorus_s = files.get("chorus_start", 45.0)
-    src_url = st.session_state.get("source_url", "")
+    src_url  = job.get("source_url", "")
     if src_url:
-        ts = int(chorus_s)
+        ts  = int(chorus_s)
         sep = "&" if "?" in src_url else "?"
         st.markdown(f"[Watch original from {ts}s on YouTube]({src_url}{sep}t={ts}s)")
 
-    # Suno API request
-    payload = st.session_state.files.get("suno_payload")
+    payload = files.get("suno_payload")
     if payload:
-        import json as _json
         with st.expander("Suno API request", expanded=False):
             display = dict(payload)
             display["prompt"] = display["prompt"][:80] + f"... ({display['prompt'].count('meow')} meows)"
             st.code(_json.dumps(display, indent=2), language="json")
 
-    # Verbose logs
-    if st.session_state.logs:
+    if job.get("logs"):
         with st.expander("Verbose logs", expanded=False):
-            st.code("\n".join(st.session_state.logs), language=None)
+            st.code("\n".join(job["logs"]), language=None)
+
+
+# ── Job status view ───────────────────────────────────────────────────────────
+_job_id = st.query_params.get("job", "")
+
+if _job_id and _job_id in JOBS:
+    job = JOBS[_job_id]
+
+    if st.button("Make another cover"):
+        del st.query_params["job"]
+        st.rerun()
+
+    st.divider()
+
+    if job["status"] == "running":
+        st.info(f"Running in background: **{job.get('step', '...')}**")
+        st.caption("You can close this tab and return later — the pipeline keeps running.")
+        if job.get("logs"):
+            with st.expander("Logs so far", expanded=False):
+                st.code("\n".join(job["logs"][-30:]), language=None)
+        time.sleep(3)
+        st.rerun()
+
+    elif job["status"] == "error":
+        st.error(f"Pipeline failed: {job.get('error', 'Unknown error')}")
+        if job.get("logs"):
+            with st.expander("Logs", expanded=True):
+                st.code("\n".join(job["logs"]), language=None)
+
+    else:  # done
+        info = job.get("video_info") or {}
+        st.subheader(f"Results — {info.get('title', '')}")
+        st.balloons()
+        show_results(job)
+
+    st.stop()
+
+
+# ── Input form ────────────────────────────────────────────────────────────────
+_col_url, _col_start = st.columns([4, 1])
+url          = _col_url.text_input("YouTube URL", placeholder="https://www.youtube.com/watch?v=...")
+manual_start = _col_start.number_input("Start time (s)", value=0, step=5, min_value=0,
+                                        help="Leave 0 to auto-detect chorus")
+run = st.button("Meowify! 🐾", type="primary")
+
+if run and url:
+    job_id = str(uuid.uuid4())[:8]
+    JOBS[job_id] = {
+        "status":      "running",
+        "step":        "Starting...",
+        "logs":        [],
+        "files":       {},
+        "suno_tracks": [],
+        "video_info":  None,
+        "source_url":  url,
+        "error":       None,
+        "suno_error":  None,
+    }
+    params = {
+        "inst_pitch":   inst_pitch,
+        "vocal_pitch":  vocal_pitch,
+        "speed":        speed,
+        "inst_gain":    inst_gain,
+        "vocal_gain":   vocal_gain,
+        "meow_gain":    meow_gain,
+        "full_song":    full_song,
+        "chorus_start": chorus_start,
+        "chorus_dur":   chorus_dur,
+        "manual_start": manual_start,
+        "kie_key":      kie_key,
+        "suno_model":   suno_model,
+        "meow_count":   meow_count,
+        "suno_style":   suno_style,
+        "vocal_gender": vocal_gender,
+        "style_weight": style_weight,
+        "audio_weight": audio_weight,
+        "weirdness":    weirdness,
+        "aws_id":       aws_id,
+        "aws_sec":      aws_sec,
+        "s3_bucket":    s3_bucket,
+    }
+    t = threading.Thread(target=run_pipeline, args=(job_id, url, params), daemon=False)
+    t.start()
+    st.query_params["job"] = job_id
+    st.rerun()
