@@ -178,10 +178,27 @@ def dl_file(url: str, dst: str) -> str:
 
 # ── Page config ───────────────────────────────────────────────────────────────
 st.set_page_config(page_title="Meowify", page_icon="🐱", layout="wide")
-st.title("🐱 Meowify")
-st.caption("Create a meow cover of your favorite song")
 
 env = load_env()
+
+# ── Auth ──────────────────────────────────────────────────────────────────────
+_NO_LOGIN = "--no-login" in sys.argv
+
+if not _NO_LOGIN and not st.session_state.get("logged_in"):
+    st.title("🐱 Meowify")
+    with st.form("login"):
+        _user = st.text_input("Username")
+        _pw   = st.text_input("Password", type="password")
+        if st.form_submit_button("Login"):
+            if _user == "stannor" and _pw == "Password1!":
+                st.session_state.logged_in = True
+                st.rerun()
+            else:
+                st.error("Invalid username or password")
+    st.stop()
+
+st.title("🐱 Meowify")
+st.caption("Create a meow cover of your favorite song")
 
 # ── Sidebar ───────────────────────────────────────────────────────────────────
 with st.sidebar:
