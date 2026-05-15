@@ -1,5 +1,8 @@
 import os
 import re
+import shutil
+import subprocess
+import sys
 import yt_dlp
 
 
@@ -7,17 +10,18 @@ def sanitize_filename(name: str) -> str:
     return re.sub(r'[^\w\s-]', '', name).strip().replace(' ', '_')[:80]
 
 
-COOKIES_FILE = os.path.join(os.path.dirname(__file__), "yt_cookies.txt")
+COOKIES_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "yt_cookies.txt")
+
 
 def _base_opts() -> dict:
-    opts = {}
+    opts = {'quiet': True, 'no_warnings': True}
     if os.path.exists(COOKIES_FILE):
         opts['cookiefile'] = COOKIES_FILE
     return opts
 
 
 def get_video_info(url: str) -> dict:
-    opts = {**_base_opts(), 'quiet': True, 'no_warnings': True, 'extract_flat': False}
+    opts = {**_base_opts(), 'extract_flat': False}
     with yt_dlp.YoutubeDL(opts) as ydl:
         info = ydl.extract_info(url, download=False)
     return {
@@ -36,25 +40,32 @@ def download_youtube_as_mp3(url: str, output_dir: str = "downloads") -> str:
     safe_name = sanitize_filename(info['title'])
     output_template = os.path.join(output_dir, f"{safe_name}.%(ext)s")
 
-    opts = {
-        **_base_opts(),
-        'format': 'bestaudio/best',
-        'outtmpl': output_template,
-        'postprocessors': [{
-            'key': 'FFmpegExtractAudio',
-            'preferredcodec': 'mp3',
-            'preferredquality': '192',
-        }],
-        'quiet': False,
-        'no_warnings': False,
-    }
+    # Use CLI directly — js-runtimes and remote-components flags aren't
+    # reliably available in the Python API but are needed for n-challenge solving.
+    # Prefer the venv's yt-dlp to ensure correct version
+    yt_dlp_bin = os.path.join(os.path.dirname(sys.executable), "yt-dlp")
+    if not os.path.exists(yt_dlp_bin):
+        yt_dlp_bin = shutil.which("yt-dlp") or "yt-dlp"
+    cmd = [
+        yt_dlp_bin,
+        "--no-js-runtimes", "--js-runtimes", "node",
+        "--remote-components", "ejs:github",
+        "-f", "bestaudio/best",
+        "--extract-audio",
+        "--audio-format", "mp3",
+        "--audio-quality", "192",
+        "-o", output_template,
+    ]
+    if os.path.exists(COOKIES_FILE):
+        cmd += ["--cookies", COOKIES_FILE]
+    cmd.append(url)
 
-    with yt_dlp.YoutubeDL(opts) as ydl:
-        ydl.download([url])
+    result = subprocess.run(cmd, capture_output=False, text=True)
+    if result.returncode != 0:
+        raise RuntimeError(f"yt-dlp failed (exit {result.returncode})")
 
     mp3_path = os.path.join(output_dir, f"{safe_name}.mp3")
     if not os.path.exists(mp3_path):
-        # fallback: find any mp3 in output_dir modified recently
         candidates = [
             os.path.join(output_dir, f)
             for f in os.listdir(output_dir)
@@ -68,12 +79,11 @@ def download_youtube_as_mp3(url: str, output_dir: str = "downloads") -> str:
 
 
 if __name__ == "__main__":
-    url = "https://www.youtube.com/watch?v=ekr2nIex040"
+    url = "https://www.youtube.com/watch?v=ImKzSpGXqOE"
     print(f"Fetching info for: {url}")
     info = get_video_info(url)
     print(f"  Title   : {info['title']}")
     print(f"  Duration: {info['duration']}s")
-    print(f"  Thumb   : {info['thumbnail_url']}")
 
     print("\nDownloading as MP3...")
     path = download_youtube_as_mp3(url)
