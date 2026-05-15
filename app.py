@@ -187,7 +187,7 @@ _NO_LOGIN = "--no-login" in sys.argv
 _BANNER = "https://cdn-images-1.medium.com/v2/resize:fit:800/1*0yOLabnolhlZDzShFH2vdg.png"
 
 if not _NO_LOGIN and not st.session_state.get("logged_in"):
-    st.image(_BANNER, width=300)
+    st.image(_BANNER, width=600)
     st.title("🐱 Meowify")
     with st.form("login"):
         _user = st.text_input("Username")
@@ -200,7 +200,7 @@ if not _NO_LOGIN and not st.session_state.get("logged_in"):
                 st.error("Invalid username or password")
     st.stop()
 
-st.image(_BANNER, width=300)
+st.image(_BANNER, width=600)
 st.title("🐱 Meowify")
 st.caption("Create a meow cover of your favorite song")
 
