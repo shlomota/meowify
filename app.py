@@ -296,48 +296,17 @@ if run and url:
             status.update(label="Download failed", state="error")
             st.error(str(e)); st.stop()
 
-    # ── 3. Demucs ─────────────────────────────────────────────────────────────
+    # ── 3. Chorus detection → cut clip from mp3 ──────────────────────────────
     base = os.path.splitext(os.path.basename(mp3_path))[0]
-    vocals_full = os.path.join(WORK_DIR, "htdemucs", base, "vocals.wav")
-    inst_full   = os.path.join(WORK_DIR, "htdemucs", base, "no_vocals.wav")
-
-    with st.status("Separating vocals (Demucs)...", expanded=True) as status:
-        try:
-            if os.path.exists(vocals_full):
-                log("Using cached Demucs output")
-                st.write("Using cached separation output")
-            else:
-                st.write("Running Demucs — this takes a few minutes...")
-                log("Starting Demucs htdemucs --two-stems vocals")
-                cmd = [sys.executable, "-m", "demucs", "--two-stems", "vocals",
-                       "-n", "htdemucs", "--out", WORK_DIR, mp3_path]
-                result = subprocess.run(cmd, capture_output=True, text=True)
-                for line in (result.stdout + result.stderr).splitlines():
-                    if line.strip():
-                        log(line)
-                if result.returncode != 0:
-                    raise RuntimeError(result.stderr[-800:])
-            st.session_state.files["vocals_full"] = vocals_full
-            st.session_state.files["inst_full"]   = inst_full
-            log(f"Vocals: {vocals_full}")
-            log(f"Instrumental: {inst_full}")
-            status.update(label="Vocals separated ✓", state="complete")
-        except Exception as e:
-            log(f"ERROR: {e}")
-            status.update(label="Separation failed", state="error")
-            st.error(str(e)); st.stop()
-
-    # ── 4. Chorus detection + extraction ─────────────────────────────────────
-    step4_label = "Selecting full song..." if full_song else "Detecting chorus..."
-    with st.status(step4_label, expanded=True) as status:
+    step3_label = "Selecting full song..." if full_song else "Detecting chorus..."
+    with st.status(step3_label, expanded=True) as status:
         try:
             if full_song:
-                chorus_voc  = vocals_full
-                chorus_inst = inst_full
-                chorus_s    = 0.0
-                log("Full song mode — using complete separated track")
-                st.write("**Full song mode** — chorus extraction skipped")
-                status.update(label="Full song ✓", state="complete")
+                chorus_s   = 0.0
+                clip_input = mp3_path
+                clip_base  = base
+                log("Full song mode — using complete track")
+                st.write("**Full song mode** — processing full track")
             else:
                 if manual_start > 0:
                     chorus_s, reason = float(manual_start), f"manual override at {manual_start:.0f}s"
@@ -346,20 +315,45 @@ if run and url:
                     chorus_s, reason = detect_chorus(mp3_path, default_start=chorus_start, duration=chorus_dur)
                 log(f"Chorus: {reason}")
                 st.write(f"**{chorus_s:.0f}s – {chorus_s+chorus_dur:.0f}s** — {reason}")
-
-                chorus_voc  = os.path.join(OUTPUT_DIR, f"{base}_chorus_vocals.wav")
-                chorus_inst = os.path.join(OUTPUT_DIR, f"{base}_chorus_inst.wav")
-                extract_clip(vocals_full, chorus_s, chorus_dur, chorus_voc)
-                extract_clip(inst_full,   chorus_s, chorus_dur, chorus_inst)
-                log(f"Clips extracted: {chorus_voc}, {chorus_inst}")
-                status.update(label=f"Chorus {chorus_s:.0f}s–{chorus_s+chorus_dur:.0f}s ✓", state="complete")
-
-            st.session_state.files["chorus_voc"]   = chorus_voc
-            st.session_state.files["chorus_inst"]  = chorus_inst
+                clip_base  = f"{base}_clip_{int(chorus_s)}s"
+                clip_input = os.path.join(OUTPUT_DIR, f"{clip_base}.wav")
+                extract_clip(mp3_path, chorus_s, chorus_dur, clip_input)
+                log(f"Clip saved: {clip_input}")
             st.session_state.files["chorus_start"] = chorus_s
+            status.update(label="Full song ✓" if full_song else f"Chorus {chorus_s:.0f}s–{chorus_s+chorus_dur:.0f}s ✓", state="complete")
         except Exception as e:
             log(f"ERROR: {e}")
-            status.update(label="Section extraction failed", state="error")
+            status.update(label="Section detection failed", state="error")
+            st.error(str(e)); st.stop()
+
+    # ── 4. Demucs on clip only ────────────────────────────────────────────────
+    chorus_voc  = os.path.join(WORK_DIR, "htdemucs", clip_base, "vocals.wav")
+    chorus_inst = os.path.join(WORK_DIR, "htdemucs", clip_base, "no_vocals.wav")
+
+    with st.status("Separating vocals (Demucs)...", expanded=True) as status:
+        try:
+            if os.path.exists(chorus_voc):
+                log("Using cached Demucs output")
+                st.write("Using cached separation output")
+            else:
+                st.write("Running Demucs on clip — this takes about a minute...")
+                log("Starting Demucs htdemucs --two-stems vocals")
+                cmd = [sys.executable, "-m", "demucs", "--two-stems", "vocals",
+                       "-n", "htdemucs", "--out", WORK_DIR, clip_input]
+                result = subprocess.run(cmd, capture_output=True, text=True)
+                for line in (result.stdout + result.stderr).splitlines():
+                    if line.strip():
+                        log(line)
+                if result.returncode != 0:
+                    raise RuntimeError(result.stderr[-800:])
+            st.session_state.files["chorus_voc"]  = chorus_voc
+            st.session_state.files["chorus_inst"] = chorus_inst
+            log(f"Vocals: {chorus_voc}")
+            log(f"Instrumental: {chorus_inst}")
+            status.update(label="Vocals separated ✓", state="complete")
+        except Exception as e:
+            log(f"ERROR: {e}")
+            status.update(label="Separation failed", state="error")
             st.error(str(e)); st.stop()
 
     # ── 5. Local meowify ─────────────────────────────────────────────────────
@@ -560,9 +554,9 @@ if st.session_state.get("video_info"):
 
     # Intermediate files
     intermediates = [
-        ("Downloaded MP3",         "mp3",        "song.mp3",                "audio/mpeg"),
-        ("Chorus — vocals",        "chorus_voc", "chorus_vocals.wav",       "audio/wav"),
-        ("Chorus — instrumental",  "chorus_inst","chorus_instrumental.wav", "audio/wav"),
+        ("Downloaded MP3",        "mp3",         "song.mp3",                "audio/mpeg"),
+        ("Clip — vocals",         "chorus_voc",  "clip_vocals.wav",         "audio/wav"),
+        ("Clip — instrumental",   "chorus_inst", "clip_instrumental.wav",   "audio/wav"),
         ("Local meowified",              "meow_local",   "meowified_local.wav",        "audio/wav"),
         ("Attempt 1 — masked",          "masked",       "meowified_masked.wav",       "audio/wav"),
         ("Attempt 2 — remix (+2st)",    "meow_retry",   "meowified_retry.wav",        "audio/wav"),
