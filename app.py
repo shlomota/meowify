@@ -31,10 +31,6 @@ SITE_URL = "https://meowify.click"
 SES_SENDER = "noreply@meowify.click"
 NOTIFY_EMAIL = "stannor@gmail.com"
 
-# ── Jobs (shared across all Streamlit sessions in this process) ───────────────
-JOBS: dict = {}
-
-
 # ── Env ───────────────────────────────────────────────────────────────────────
 def load_env() -> dict:
     env = {}
@@ -442,6 +438,14 @@ def run_pipeline(job_id: str, url: str, params: dict):
 
 # ── Page config ───────────────────────────────────────────────────────────────
 st.set_page_config(page_title="Meowify", page_icon="🐱", layout="wide")
+
+# @st.cache_resource gives the same dict on every script rerun and every session.
+# A plain module-level `JOBS = {}` would reset to empty on each Streamlit rerun.
+@st.cache_resource
+def _jobs_store() -> dict:
+    return {}
+
+JOBS = _jobs_store()
 
 env = load_env()
 
