@@ -6,6 +6,7 @@ __pycache__/
 
 # Environment / secrets
 .env
+yt_cookies.txt
 
 # Generated audio
 downloads/

@@ -7,8 +7,17 @@ def sanitize_filename(name: str) -> str:
     return re.sub(r'[^\w\s-]', '', name).strip().replace(' ', '_')[:80]
 
 
+COOKIES_FILE = os.path.join(os.path.dirname(__file__), "yt_cookies.txt")
+
+def _base_opts() -> dict:
+    opts = {}
+    if os.path.exists(COOKIES_FILE):
+        opts['cookiefile'] = COOKIES_FILE
+    return opts
+
+
 def get_video_info(url: str) -> dict:
-    opts = {'quiet': True, 'no_warnings': True, 'extract_flat': False}
+    opts = {**_base_opts(), 'quiet': True, 'no_warnings': True, 'extract_flat': False}
     with yt_dlp.YoutubeDL(opts) as ydl:
         info = ydl.extract_info(url, download=False)
     return {
@@ -28,6 +37,7 @@ def download_youtube_as_mp3(url: str, output_dir: str = "downloads") -> str:
     output_template = os.path.join(output_dir, f"{safe_name}.%(ext)s")
 
     opts = {
+        **_base_opts(),
         'format': 'bestaudio/best',
         'outtmpl': output_template,
         'postprocessors': [{
