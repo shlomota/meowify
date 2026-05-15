@@ -1,6 +1,8 @@
 # Meowify
 > github.com/shlomota/meowify
 
+![Meowify](https://cdn-images-1.medium.com/v2/resize:fit:800/1*0yOLabnolhlZDzShFH2vdg.png)
+
 Turn any YouTube song into a cat meow cover — powered by Demucs, librosa, and Suno AI.
 
 ---
