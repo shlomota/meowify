@@ -1,9 +1,9 @@
+import json as _json
 import os
 import re
 import shutil
 import subprocess
 import sys
-import yt_dlp
 
 
 def sanitize_filename(name: str) -> str:
@@ -21,9 +21,22 @@ def _base_opts() -> dict:
 
 
 def get_video_info(url: str) -> dict:
-    opts = {**_base_opts(), 'extract_flat': False}
-    with yt_dlp.YoutubeDL(opts) as ydl:
-        info = ydl.extract_info(url, download=False)
+    yt_dlp_bin = os.path.join(os.path.dirname(sys.executable), "yt-dlp")
+    if not os.path.exists(yt_dlp_bin):
+        yt_dlp_bin = shutil.which("yt-dlp") or "yt-dlp"
+    cmd = [
+        yt_dlp_bin,
+        "--no-js-runtimes", "--js-runtimes", "node",
+        "--remote-components", "ejs:github",
+        "--dump-json", "--no-playlist",
+    ]
+    if os.path.exists(COOKIES_FILE):
+        cmd += ["--cookies", COOKIES_FILE]
+    cmd.append(url)
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    if result.returncode != 0:
+        raise RuntimeError(result.stderr.strip().splitlines()[-1] if result.stderr.strip() else "yt-dlp failed")
+    info = _json.loads(result.stdout)
     return {
         'title': info.get('title', 'Unknown'),
         'duration': info.get('duration', 0),
