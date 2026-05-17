@@ -1,131 +1,162 @@
 {% extends "base.html" %}
 {% block content %}
 <div class="row justify-content-center">
-  <div class="col-lg-8">
-    <img src="{{ banner }}" class="img-fluid rounded mb-4" style="max-width:600px;display:block;margin:auto">
+  <div class="col-lg-7">
+
+    <div class="text-center mb-5">
+      <img src="{{ banner }}" class="img-fluid rounded-3 shadow-sm mb-4" style="max-width:520px">
+      <h2 class="fw-bold mb-1">Make a cat cover</h2>
+      <p class="text-muted">Paste a YouTube link. We handle the rest.</p>
+    </div>
 
     {% if error %}
     <div class="alert alert-danger">{{ error }}</div>
     {% endif %}
 
     {% if user.credits == 0 %}
-    <div class="alert alert-warning">You have no credits left. <a href="mailto:stannor@gmail.com">Contact us</a> to get more.</div>
+    <div class="alert alert-warning">
+      You've used all your credits. <a href="mailto:stannor@gmail.com">Get in touch</a> for more.
+    </div>
     {% endif %}
 
-    <form method="post" action="/submit" id="submit-form">
-      <div class="card mb-3">
-        <div class="card-body">
-          <div class="row g-2 align-items-end">
-            <div class="col-9">
-              <label class="form-label fw-semibold">YouTube URL</label>
-              <input type="url" name="url" class="form-control form-control-lg"
-                     placeholder="https://www.youtube.com/watch?v=..." required>
-            </div>
-            <div class="col-3">
-              <label class="form-label">Start time (s)</label>
-              <input type="number" name="manual_start" class="form-control" value="0" min="0" step="5"
-                     title="Leave 0 to auto-detect chorus">
+    <div class="card shadow-sm mb-4">
+      <div class="card-body p-4">
+        <form method="post" action="/submit" id="submit-form">
+
+          <div class="mb-3">
+            <label class="form-label fw-semibold">YouTube URL</label>
+            <input type="url" name="url" id="url-input" class="form-control form-control-lg"
+                   placeholder="https://www.youtube.com/watch?v=..." required>
+            <div class="mt-2 d-flex flex-wrap gap-2">
+              <span class="text-muted small me-1">Try:</span>
+              {% set examples = [
+                ("Shape of You", "https://youtu.be/JGwWNGJdvx8"),
+                ("Blinding Lights", "https://youtu.be/4NRXx6U8ABQ"),
+                ("Bohemian Rhapsody", "https://youtu.be/fJ9rUzIMcZQ"),
+              ] %}
+              {% for title, link in examples %}
+              <button type="button" class="btn btn-sm btn-outline-secondary example-btn" data-url="{{ link }}">
+                {{ title }}
+              </button>
+              {% endfor %}
             </div>
           </div>
-        </div>
-      </div>
 
-      <div class="accordion mb-3" id="advancedAccordion">
-        <div class="accordion-item">
-          <h2 class="accordion-header">
-            <button class="accordion-button collapsed" type="button"
-                    data-bs-toggle="collapse" data-bs-target="#advancedBody">
-              Advanced settings
-            </button>
-          </h2>
-          <div id="advancedBody" class="accordion-collapse collapse">
-            <div class="accordion-body">
+          <div class="row g-2 align-items-end mb-3">
+            <div class="col">
+              <label class="form-label small text-muted">Start at (s) — leave 0 to auto-detect</label>
+              <input type="number" name="manual_start" class="form-control" value="0" min="0" step="5">
+            </div>
+          </div>
 
-              <div class="row g-3 mb-3">
-                <div class="col-md-6">
-                  <h6 class="text-muted">Audio</h6>
-                  {% macro slider(name, label, min, max, step, val) %}
-                  <div class="mb-2">
-                    <label class="form-label small">{{ label }}: <span id="{{ name }}_val">{{ val }}</span></label>
-                    <input type="range" class="form-range" name="{{ name }}"
-                           min="{{ min }}" max="{{ max }}" step="{{ step }}" value="{{ val }}"
-                           oninput="document.getElementById('{{ name }}_val').textContent=this.value">
+          <details class="mb-4">
+            <summary class="text-muted small mb-3" style="cursor:pointer">Advanced settings</summary>
+            <div class="row g-4 mt-1">
+              <div class="col-md-6">
+                <h6 class="text-muted fw-semibold small text-uppercase mb-3">Audio</h6>
+                {% macro slider(name, label, min, max, step, val) %}
+                <div class="mb-3">
+                  <div class="d-flex justify-content-between">
+                    <label class="form-label small">{{ label }}</label>
+                    <span class="text-muted small" id="{{ name }}_val">{{ val }}</span>
                   </div>
-                  {% endmacro %}
-                  {{ slider("inst_pitch",  "Instrumental pitch (st)", 0, 24, 1, 0) }}
-                  {{ slider("vocal_pitch", "Vocal/meow pitch (st)",   0, 36, 1, 12) }}
-                  {{ slider("speed",       "Speed factor",            1.0, 2.0, 0.1, 1.2) }}
-                  {{ slider("inst_gain",   "Instrumental volume",     0.0, 1.5, 0.05, 1.0) }}
-                  {{ slider("vocal_gain",  "Original vocals volume",  0.0, 1.0, 0.05, 0.5) }}
-                  {{ slider("meow_gain",   "Meow volume",             0.0, 1.5, 0.05, 0.7) }}
+                  <input type="range" class="form-range" name="{{ name }}"
+                         min="{{ min }}" max="{{ max }}" step="{{ step }}" value="{{ val }}"
+                         oninput="document.getElementById('{{ name }}_val').textContent=this.value">
+                </div>
+                {% endmacro %}
+                {{ slider("inst_pitch",  "Instrumental pitch (semitones)", 0, 24, 1, 0) }}
+                {{ slider("vocal_pitch", "Vocal / meow pitch (semitones)", 0, 36, 1, 12) }}
+                {{ slider("speed",       "Speed", 1.0, 2.0, 0.1, 1.2) }}
+                {{ slider("inst_gain",   "Instrumental volume", 0.0, 1.5, 0.05, 1.0) }}
+                {{ slider("vocal_gain",  "Original vocal volume", 0.0, 1.0, 0.05, 0.5) }}
+                {{ slider("meow_gain",   "Meow volume", 0.0, 1.5, 0.05, 0.7) }}
+              </div>
+
+              <div class="col-md-6">
+                <h6 class="text-muted fw-semibold small text-uppercase mb-3">Section</h6>
+                <div class="form-check mb-3">
+                  <input class="form-check-input" type="checkbox" name="full_song" id="full_song"
+                         onchange="toggleChorus(this)">
+                  <label class="form-check-label small" for="full_song">Full song (skip chorus extraction)</label>
+                </div>
+                <div id="chorus-fields">
+                  <label class="form-label small">Fallback start (s)</label>
+                  <input type="number" name="chorus_start" class="form-control form-control-sm mb-2" value="45" step="5">
+                  <label class="form-label small">Duration (s)</label>
+                  <input type="number" name="chorus_dur" class="form-control form-control-sm" value="45" min="15" max="60" step="5">
                 </div>
 
-                <div class="col-md-6">
-                  <h6 class="text-muted">Section</h6>
-                  <div class="form-check mb-2">
-                    <input class="form-check-input" type="checkbox" name="full_song" id="full_song"
-                           onchange="toggleChorus(this)">
-                    <label class="form-check-label" for="full_song">Full song (skip chorus extraction)</label>
-                  </div>
-                  <div id="chorus-fields">
-                    <label class="form-label small">Fallback start (s)</label>
-                    <input type="number" name="chorus_start" class="form-control form-control-sm mb-2"
-                           value="45" step="5">
-                    <label class="form-label small">Duration (s)</label>
-                    <input type="number" name="chorus_dur" class="form-control form-control-sm"
-                           value="45" min="15" max="60" step="5">
-                  </div>
-
-                  <h6 class="text-muted mt-3">Suno</h6>
+                <h6 class="text-muted fw-semibold small text-uppercase mb-3 mt-4">Suno</h6>
+                <div class="mb-2">
                   <label class="form-label small">Model</label>
-                  <select name="suno_model" class="form-select form-select-sm mb-2">
+                  <select name="suno_model" class="form-select form-select-sm">
                     <option selected>V5_5</option>
                     <option>V5</option><option>V4_5PLUS</option><option>V4_5</option><option>V4</option>
                   </select>
+                </div>
+                <div class="mb-2">
                   <label class="form-label small">Style</label>
-                  <input type="text" name="suno_style" class="form-control form-control-sm mb-2" value="pop">
+                  <input type="text" name="suno_style" class="form-control form-control-sm" value="pop">
+                </div>
+                <div class="mb-2">
                   <label class="form-label small">Vocal gender</label>
-                  <select name="vocal_gender" class="form-select form-select-sm mb-2">
-                    <option value="(none)">(none)</option>
+                  <select name="vocal_gender" class="form-select form-select-sm">
+                    <option value="(none)">Auto</option>
                     <option value="f">Female</option>
                     <option value="m">Male</option>
                   </select>
-                  <label class="form-label small">Meows in lyrics: <span id="meow_count_val">120</span></label>
-                  <input type="range" class="form-range" name="meow_count"
-                         min="50" max="300" step="10" value="120" id="meow_count_input"
-                         oninput="document.getElementById('meow_count_val').textContent=this.value">
-                  {% macro wslider(name, label) %}
-                  <label class="form-label small mt-1">{{ label }}: <span id="{{ name }}_val">0</span></label>
-                  <input type="range" class="form-range" name="{{ name }}"
-                         min="0" max="1" step="0.05" value="0"
-                         oninput="document.getElementById('{{ name }}_val').textContent=this.value">
-                  {% endmacro %}
-                  {{ wslider("style_weight", "Style weight (0=off)") }}
-                  {{ wslider("audio_weight", "Audio weight (0=off)") }}
-                  {{ wslider("weirdness",    "Weirdness (0=off)") }}
                 </div>
+                <div class="mb-2">
+                  <div class="d-flex justify-content-between">
+                    <label class="form-label small">Meow count</label>
+                    <span class="text-muted small" id="meow_count_val">120</span>
+                  </div>
+                  <input type="range" class="form-range" name="meow_count" min="50" max="300" step="10" value="120"
+                         oninput="document.getElementById('meow_count_val').textContent=this.value">
+                </div>
+                {% macro wslider(name, label) %}
+                <div class="mb-2">
+                  <div class="d-flex justify-content-between">
+                    <label class="form-label small">{{ label }}</label>
+                    <span class="text-muted small" id="{{ name }}_val">0</span>
+                  </div>
+                  <input type="range" class="form-range" name="{{ name }}" min="0" max="1" step="0.05" value="0"
+                         oninput="document.getElementById('{{ name }}_val').textContent=this.value">
+                </div>
+                {% endmacro %}
+                {{ wslider("style_weight", "Style weight") }}
+                {{ wslider("audio_weight", "Audio weight") }}
+                {{ wslider("weirdness",    "Weirdness") }}
               </div>
-
             </div>
-          </div>
-        </div>
-      </div>
+          </details>
 
-      <button type="submit" class="btn btn-primary btn-lg w-100"
-              {% if user.credits == 0 %}disabled{% endif %}
-              onclick="this.disabled=true; this.textContent='Starting…'; this.form.submit()">
-        Meowify! 🐾
-      </button>
-      <p class="text-muted small text-center mt-2">Uses 1 credit per run. You have {{ user.credits }} remaining.</p>
-    </form>
+          <button type="submit" class="btn btn-dark btn-lg w-100"
+                  {% if user.credits == 0 %}disabled{% endif %}
+                  onclick="if(this.form.checkValidity()){this.disabled=true;this.textContent='Starting…';}">
+            Generate cover
+          </button>
+          <p class="text-muted text-center small mt-2">
+            Uses 1 credit &mdash; {{ user.credits }} remaining
+          </p>
+
+        </form>
+      </div>
+    </div>
+
   </div>
 </div>
 
 <script>
 function toggleChorus(cb) {
-  document.getElementById('chorus-fields').style.opacity = cb.checked ? '0.3' : '1';
+  document.getElementById('chorus-fields').style.opacity = cb.checked ? '0.4' : '1';
   document.querySelectorAll('#chorus-fields input').forEach(el => el.disabled = cb.checked);
-  document.getElementById('meow_count_input').disabled = false;
 }
+document.querySelectorAll('.example-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.getElementById('url-input').value = btn.dataset.url;
+  });
+});
 </script>
 {% endblock %}
