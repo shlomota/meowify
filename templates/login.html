@@ -46,20 +46,25 @@
   </div>
 
   {# Right — examples #}
-  <div class="col-md-6 offset-md-1">
-    <p class="text-muted small text-uppercase fw-semibold mb-3" style="letter-spacing:.06em">Try these songs</p>
+  <div class="col-md-4">
+    <p class="text-muted small text-uppercase fw-semibold mb-3" style="letter-spacing:.06em">Hear it in action</p>
     <div class="d-flex flex-column gap-3">
-      {% for vid_id in ["4fMOwqXNvHo", "VmqXdFHprSA", "1_mW-Tz_ivI"] %}
+      {% set examples = [
+        ("4fMOwqXNvHo", "ירושלים של זהב — Meowified"),
+        ("VmqXdFHprSA", "הנני מוכן ומזומן — Meowified"),
+        ("1_mW-Tz_ivI", "Sing For The Moment — Meowified"),
+        ("JwYhmRKBAg8", "גברת עם סלים — Meowified"),
+      ] %}
+      {% for vid_id, title in examples %}
       <a href="https://youtu.be/{{ vid_id }}" target="_blank" class="text-decoration-none">
         <div class="card border shadow-sm overflow-hidden" style="border-radius:10px">
           <div class="row g-0 align-items-center">
             <div class="col-5">
               <img src="https://img.youtube.com/vi/{{ vid_id }}/mqdefault.jpg"
-                   class="img-fluid" style="object-fit:cover;height:90px;width:100%">
+                   style="object-fit:cover;height:72px;width:100%">
             </div>
             <div class="col-7 px-3">
-              <div class="text-dark small fw-semibold">Watch on YouTube ↗</div>
-              <div class="text-muted" style="font-size:.78rem">youtu.be/{{ vid_id }}</div>
+              <div class="text-dark" style="font-size:.82rem;font-weight:500;line-height:1.3">{{ title }}</div>
             </div>
           </div>
         </div>
