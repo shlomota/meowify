@@ -473,8 +473,7 @@ async def login_page(request: Request):
         return RedirectResponse("/")
     state = secrets.token_urlsafe(16)
     request.session["oauth_state"] = state
-    return templates.TemplateResponse("login.html", {
-        "request": request,
+    return templates.TemplateResponse(request, "login.html", {
         "auth_url": google_auth_url(state),
         "banner": BANNER,
         "error": request.query_params.get("error"),
@@ -513,8 +512,8 @@ async def index(request: Request):
     user = current_user(request)
     if not user:
         return RedirectResponse("/login")
-    return templates.TemplateResponse("index.html", {
-        "request": request, "user": user, "banner": BANNER,
+    return templates.TemplateResponse(request, "index.html", {
+        "user": user, "banner": BANNER,
     })
 
 @app.post("/submit")
@@ -543,8 +542,8 @@ async def submit(
     if not user:
         return RedirectResponse("/login", status_code=303)
     if not use_credit(user["email"]):
-        return templates.TemplateResponse("index.html", {
-            "request": request, "user": user, "banner": BANNER,
+        return templates.TemplateResponse(request, "index.html", {
+            "user": user, "banner": BANNER,
             "error": "No credits remaining. Contact stannor@gmail.com to get more.",
         })
 
@@ -586,8 +585,8 @@ async def job_page(job_id: str, request: Request):
         raise HTTPException(404, "Job not found (server may have restarted)")
     if not can_access_job(user, job):
         raise HTTPException(403, "Access denied")
-    return templates.TemplateResponse("job.html", {
-        "request": request, "user": user, "banner": BANNER,
+    return templates.TemplateResponse(request, "job.html", {
+        "user": user, "banner": BANNER,
         "job": job, "job_id": job_id,
     })
 
@@ -601,8 +600,8 @@ async def job_poll(job_id: str, request: Request):
         return HTMLResponse("<p>Job not found (server may have restarted).</p>")
     if not can_access_job(user, job):
         return HTMLResponse("<p>Access denied.</p>")
-    return templates.TemplateResponse("_job_status.html", {
-        "request": request, "job": job, "job_id": job_id,
+    return templates.TemplateResponse(request, "_job_status.html", {
+        "job": job, "job_id": job_id,
     })
 
 
@@ -656,8 +655,8 @@ async def admin_users(request: Request):
     user = current_user(request)
     if not user or user["email"] != ADMIN_EMAIL:
         raise HTTPException(403)
-    return templates.TemplateResponse("admin_users.html", {
-        "request": request, "user": user, "banner": BANNER,
+    return templates.TemplateResponse(request, "admin_users.html", {
+        "user": user, "banner": BANNER,
         "users": all_users(),
     })
 
