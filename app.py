@@ -314,7 +314,7 @@ def run_pipeline(job_id: str, url: str, params: dict):
             log(f"Uploaded s3://{s3_bucket}/{s3_key}")
 
             _suffix = " (Meow Cover)"
-            cover_title = info["title"][: 100 - len(_suffix)] + _suffix
+            cover_title = info["title"][: 95 - len(_suffix)] + _suffix
             terminal = {"SUCCESS", "FAILED", "ERROR", "FIRST_SUCCESS", "GENERATE_AUDIO_FAILED"}
 
             def _meow(n): return "\n".join(["meow"] * n)
