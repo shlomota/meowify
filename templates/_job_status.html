@@ -1,0 +1,98 @@
+{% if job.status == "running" %}
+<div hx-get="/job/{{ job_id }}/poll"
+     hx-trigger="every 3s"
+     hx-target="#job-status"
+     hx-swap="innerHTML">
+  <div class="alert alert-info d-flex align-items-center gap-2">
+    <div class="spinner-border spinner-border-sm flex-shrink-0"></div>
+    <div><strong>{{ job.step }}</strong><br>
+    <small class="text-muted">You can close this tab — the job keeps running. Check back with the same link.</small></div>
+  </div>
+  {% if job.logs %}
+  <details class="mb-2">
+    <summary class="text-muted small">Logs so far</summary>
+    <pre class="small bg-light p-2 rounded mt-1" style="max-height:200px;overflow-y:auto">{{ job.logs[-30:] | join('\n') }}</pre>
+  </details>
+  {% endif %}
+</div>
+
+{% elif job.status == "error" %}
+<div class="alert alert-danger">
+  <strong>Pipeline failed:</strong> {{ job.error }}
+</div>
+{% if job.logs %}
+<details open>
+  <summary class="text-muted small">Logs</summary>
+  <pre class="small bg-light p-2 rounded mt-1" style="max-height:300px;overflow-y:auto">{{ job.logs | join('\n') }}</pre>
+</details>
+{% endif %}
+
+{% else %}{# done #}
+{% if job.suno_error %}
+<div class="alert alert-warning">{{ job.suno_error }}</div>
+{% endif %}
+
+{% if job.suno_tracks %}
+<h5 class="mb-3">Suno covers</h5>
+{% for i, track in job.suno_tracks | enumerate %}
+<div class="card mb-3">
+  <div class="card-body">
+    <div class="fw-semibold mb-2">Track {{ i+1 }}: {{ track.title }}</div>
+    <audio controls class="w-100 mb-2">
+      <source src="/files/{{ job_id }}/suno_{{ i }}" type="audio/mpeg">
+    </audio>
+    <a href="/files/{{ job_id }}/suno_{{ i }}?dl=true" class="btn btn-sm btn-outline-primary">
+      Download track {{ i+1 }}
+    </a>
+  </div>
+</div>
+{% endfor %}
+{% endif %}
+
+<details class="mb-3">
+  <summary class="fw-semibold">Intermediate files</summary>
+  <div class="row g-2 mt-1">
+    {% set intermediates = [
+      ("mp3",          "Downloaded MP3",         "audio/mpeg"),
+      ("chorus_voc",   "Clip — vocals",          "audio/wav"),
+      ("chorus_inst",  "Clip — instrumental",    "audio/wav"),
+      ("meow_local",   "Local meowified",        "audio/wav"),
+      ("masked",       "Attempt 1 — masked",     "audio/wav"),
+      ("meow_retry",   "Attempt 2 — remix",      "audio/wav"),
+      ("heavy_masked", "Attempt 2 — heavy mask", "audio/wav"),
+    ] %}
+    {% for key, label, mime in intermediates %}
+    {% if job.files.get(key) %}
+    <div class="col-md-4">
+      <div class="card h-100">
+        <div class="card-body p-2">
+          <div class="small text-muted mb-1">{{ label }}</div>
+          <audio controls class="w-100 mb-1" style="height:36px">
+            <source src="/files/{{ job_id }}/{{ key }}" type="{{ mime }}">
+          </audio>
+          <a href="/files/{{ job_id }}/{{ key }}?dl=true" class="btn btn-sm btn-outline-secondary w-100">Download</a>
+        </div>
+      </div>
+    </div>
+    {% endif %}
+    {% endfor %}
+  </div>
+</details>
+
+{% if job.source_url %}
+{% set ts = job.files.get("chorus_start", 45) | int %}
+{% set sep = "&" if "?" in job.source_url else "?" %}
+<p class="text-muted small">
+  <a href="{{ job.source_url }}{{ sep }}t={{ ts }}s" target="_blank">
+    Watch original from {{ ts }}s on YouTube ↗
+  </a>
+</p>
+{% endif %}
+
+{% if job.logs %}
+<details>
+  <summary class="text-muted small">Verbose logs</summary>
+  <pre class="small bg-light p-2 rounded mt-1" style="max-height:300px;overflow-y:auto">{{ job.logs | join('\n') }}</pre>
+</details>
+{% endif %}
+{% endif %}

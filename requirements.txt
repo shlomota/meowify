@@ -9,3 +9,9 @@ streamlit
 torchcodec
 boto3
 requests
+fastapi
+uvicorn[standard]
+jinja2
+python-multipart
+itsdangerous
+aiofiles

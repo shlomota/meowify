@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+{% block content %}
+<h4>Users</h4>
+<table class="table table-sm">
+  <thead><tr><th>Email</th><th>Name</th><th>Credits</th><th>Joined</th><th>Add credits</th></tr></thead>
+  <tbody>
+  {% for u in users %}
+  <tr>
+    <td>{{ u.email }}</td>
+    <td>{{ u.name }}</td>
+    <td><strong>{{ u.credits }}</strong></td>
+    <td class="text-muted small">{{ u.created_at }}</td>
+    <td>
+      <form method="post" action="/admin/credits" class="d-flex gap-1">
+        <input type="hidden" name="email" value="{{ u.email }}">
+        <input type="number" name="amount" value="5" min="1" class="form-control form-control-sm" style="width:70px">
+        <button class="btn btn-sm btn-outline-primary">Add</button>
+      </form>
+    </td>
+  </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endblock %}
