@@ -24,7 +24,7 @@
 
     <p class="text-muted" style="font-size:.85rem">5 free covers on sign-up. No credit card required.</p>
 
-    <div class="row text-start mt-5 g-3">
+    <div class="row text-start mt-5 g-3 mb-2">
       <div class="col-4">
         <div class="p-3 bg-white rounded-3 shadow-sm h-100">
           <div class="fw-semibold mb-1 small">Step 1</div>
@@ -43,6 +43,23 @@
           <div class="text-muted small">Get a full cat cover</div>
         </div>
       </div>
+    </div>
+
+    <p class="text-muted small mt-4 mb-2 text-start">Try these songs:</p>
+    <div class="row g-2 text-start">
+      {% for vid_id in ["4fMOwqXNvHo", "VmqXdFHprSA", "1_mW-Tz_ivI"] %}
+      <div class="col-4">
+        <a href="https://youtu.be/{{ vid_id }}" target="_blank" class="text-decoration-none">
+          <div class="card border-0 shadow-sm overflow-hidden">
+            <img src="https://img.youtube.com/vi/{{ vid_id }}/mqdefault.jpg"
+                 class="card-img-top" style="object-fit:cover;height:80px">
+            <div class="card-body p-2 text-center">
+              <span class="text-muted small">Watch ↗</span>
+            </div>
+          </div>
+        </a>
+      </div>
+      {% endfor %}
     </div>
   </div>
 </div>
