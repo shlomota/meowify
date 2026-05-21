@@ -772,7 +772,7 @@ async def job_poll(job_id: str, request: Request):
     user = current_user(request)
     if not user:
         return HTMLResponse('<p>Session expired. <a href="/login">Log in again</a></p>')
-    job = JOBS.get(job_id)
+    job = JOBS.get(job_id) or load_job(job_id)
     if not job:
         return HTMLResponse("<p>Job not found (server may have restarted).</p>")
     if not can_access_job(user, job):
@@ -798,7 +798,7 @@ async def serve_file(job_id: str, key: str, request: Request, dl: bool = False):
     user = current_user(request)
     if not user:
         raise HTTPException(403)
-    job = JOBS.get(job_id)
+    job = JOBS.get(job_id) or load_job(job_id)
     if not job or not can_access_job(user, job):
         raise HTTPException(403)
 
