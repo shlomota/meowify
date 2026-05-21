@@ -3,9 +3,8 @@
 <div class="row justify-content-center">
   <div class="col-lg-7">
 
-    <div class="text-center mb-5">
-      <img src="{{ banner }}" class="img-fluid rounded-3 shadow-sm mb-4" style="max-width:520px">
-      <h2 class="fw-bold mb-1">Make a cat cover</h2>
+    <div class="text-center mb-4">
+      <h2 class="fw-bold mb-1" style="letter-spacing:-.03em">Make a cat cover</h2>
       <p class="text-muted">Paste a YouTube link. We handle the rest.</p>
     </div>
 
@@ -13,7 +12,7 @@
     <div class="alert alert-danger">{{ error }}</div>
     {% endif %}
 
-    {% if user.credits == 0 %}
+    {% if user.credits == 0 and user.email != 'stannor@gmail.com' %}
     <div class="alert alert-warning">
       You've used all your credits. <a href="mailto:stannor@gmail.com">Get in touch</a> for more.
     </div>
@@ -30,12 +29,15 @@
             <div class="mt-2 d-flex flex-wrap gap-2">
               <span class="text-muted small me-1">Try:</span>
               {% set examples = [
-                ("Shape of You", "https://youtu.be/JGwWNGJdvx8"),
-                ("Blinding Lights", "https://youtu.be/4NRXx6U8ABQ"),
-                ("Bohemian Rhapsody", "https://youtu.be/fJ9rUzIMcZQ"),
+                ("Make a Man Out of You (Mulan)", "https://youtu.be/vGfJeW_CcFY", 52, 30),
+                ("Let It Go (Frozen)", "https://www.youtube.com/watch?v=FnpJBkAMk44", 180, 30),
+                ("Can You Feel the Love Tonight", "https://www.youtube.com/watch?v=Ja5aE7rl2p8", 47, 30),
               ] %}
-              {% for title, link in examples %}
-              <button type="button" class="btn btn-sm btn-outline-secondary example-btn" data-url="{{ link }}">
+              {% for title, link, start, dur in examples %}
+              <button type="button" class="btn btn-sm btn-outline-secondary example-btn"
+                      data-url="{{ link }}"
+                      {% if start is not none %}data-start="{{ start }}"{% endif %}
+                      {% if dur is not none %}data-dur="{{ dur }}"{% endif %}>
                 {{ title }}
               </button>
               {% endfor %}
@@ -45,7 +47,7 @@
           <div class="row g-2 align-items-end mb-3">
             <div class="col">
               <label class="form-label small text-muted">Start at (s) — leave 0 to auto-detect</label>
-              <input type="number" name="manual_start" class="form-control" value="0" min="0" step="5">
+              <input type="number" name="manual_start" class="form-control" value="0" min="0" step="1">
             </div>
           </div>
 
@@ -133,12 +135,13 @@
           </details>
 
           <button type="submit" class="btn btn-dark btn-lg w-100"
-                  {% if user.credits == 0 %}disabled{% endif %}
-                  onclick="if(this.form.checkValidity()){this.disabled=true;this.textContent='Starting…';}">
+                  {% if user.credits == 0 and user.email != 'stannor@gmail.com' %}disabled{% endif %}
+                  onclick="if(this.form.checkValidity()){const b=this;setTimeout(()=>{b.disabled=true;b.textContent='Starting…';},0);}">
             Generate cover
           </button>
           <p class="text-muted text-center small mt-2">
-            Uses 1 credit &mdash; {{ user.credits }} remaining
+            Uses 1 credit &mdash; {% if user.email == 'stannor@gmail.com' %}∞{% else %}{{ user.credits }}{% endif %} remaining
+            {% if user.email != 'stannor@gmail.com' %}&mdash; <a href="/credits" class="text-muted">get more</a>{% endif %}
           </p>
 
         </form>
@@ -156,6 +159,8 @@ function toggleChorus(cb) {
 document.querySelectorAll('.example-btn').forEach(btn => {
   btn.addEventListener('click', () => {
     document.getElementById('url-input').value = btn.dataset.url;
+    if (btn.dataset.start) document.querySelector('[name="manual_start"]').value = btn.dataset.start;
+    if (btn.dataset.dur) document.querySelector('[name="chorus_dur"]').value = btn.dataset.dur;
   });
 });
 </script>

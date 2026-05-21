@@ -25,7 +25,7 @@ import requests as http_requests
 import soundfile as sf
 from scipy import signal as sig
 
-from fastapi import FastAPI, Form, HTTPException, Request
+from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -78,6 +78,8 @@ def _db():
     con.row_factory = sqlite3.Row
     return con
 
+SHARES_DIR = "uploads/shares"
+
 def init_db():
     con = _db()
     con.executescript("""
@@ -85,18 +87,88 @@ def init_db():
             email   TEXT PRIMARY KEY,
             name    TEXT,
             picture TEXT,
-            credits INTEGER DEFAULT 5,
+            credits INTEGER DEFAULT 3,
             created_at TEXT DEFAULT (datetime('now'))
+        );
+        CREATE TABLE IF NOT EXISTS shares (
+            id           TEXT PRIMARY KEY,
+            email        TEXT,
+            screenshot   TEXT,
+            submitted_at TEXT DEFAULT (datetime('now')),
+            approved     INTEGER DEFAULT 0
+        );
+        CREATE TABLE IF NOT EXISTS jobs (
+            id          TEXT PRIMARY KEY,
+            owner_email TEXT,
+            source_url  TEXT,
+            status      TEXT,
+            step        TEXT,
+            error       TEXT,
+            suno_error  TEXT,
+            title       TEXT,
+            files       TEXT,
+            suno_tracks TEXT,
+            video_info  TEXT,
+            logs        TEXT,
+            created_at  TEXT DEFAULT (datetime('now'))
         );
     """)
     con.commit()
     con.close()
 
+def save_job(job_id: str, job: dict):
+    import json as _j
+    con = _db()
+    con.execute("""
+        INSERT OR REPLACE INTO jobs
+            (id, owner_email, source_url, status, step, error, suno_error, title, files, suno_tracks, video_info, logs)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
+    """, (
+        job_id,
+        job.get("owner_email"),
+        job.get("source_url"),
+        job.get("status"),
+        job.get("step"),
+        job.get("error"),
+        job.get("suno_error"),
+        (job.get("video_info") or {}).get("title"),
+        _j.dumps(job.get("files", {})),
+        _j.dumps(job.get("suno_tracks", [])),
+        _j.dumps(job.get("video_info")),
+        _j.dumps(job.get("logs", [])),
+    ))
+    con.commit()
+    con.close()
+
+def load_job(job_id: str) -> Optional[dict]:
+    import json as _j
+    con = _db()
+    row = con.execute("SELECT * FROM jobs WHERE id=?", (job_id,)).fetchone()
+    con.close()
+    if not row:
+        return None
+    return {
+        "status":      row["status"],
+        "step":        row["step"],
+        "error":       row["error"],
+        "suno_error":  row["suno_error"],
+        "source_url":  row["source_url"],
+        "owner_email": row["owner_email"],
+        "files":       _j.loads(row["files"] or "{}"),
+        "suno_tracks": _j.loads(row["suno_tracks"] or "[]"),
+        "video_info":  _j.loads(row["video_info"] or "null"),
+        "logs":        _j.loads(row["logs"] or "[]"),
+    }
+
 def get_or_create_user(email: str, name: str, picture: str) -> dict:
     con = _db()
     con.execute(
-        "INSERT OR IGNORE INTO users (email, name, picture, credits) VALUES (?,?,?,5)",
+        "INSERT OR IGNORE INTO users (email, name, picture, credits) VALUES (?,?,?,3)",
         (email, name, picture),
+    )
+    con.execute(
+        "UPDATE users SET name=?, picture=? WHERE email=?",
+        (name, picture, email),
     )
     con.commit()
     row = con.execute("SELECT * FROM users WHERE email=?", (email,)).fetchone()
@@ -110,6 +182,8 @@ def get_user(email: str) -> Optional[dict]:
     return dict(row) if row else None
 
 def use_credit(email: str) -> bool:
+    if email == ADMIN_EMAIL:
+        return True
     con = _db()
     row = con.execute("SELECT credits FROM users WHERE email=?", (email,)).fetchone()
     if not row or row["credits"] <= 0:
@@ -123,6 +197,14 @@ def use_credit(email: str) -> bool:
 def all_users() -> list[dict]:
     con = _db()
     rows = con.execute("SELECT * FROM users ORDER BY created_at DESC").fetchall()
+    con.close()
+    return [dict(r) for r in rows]
+
+def pending_shares() -> list[dict]:
+    con = _db()
+    rows = con.execute(
+        "SELECT * FROM shares WHERE approved=0 ORDER BY submitted_at DESC"
+    ).fetchall()
     con.close()
     return [dict(r) for r in rows]
 
@@ -233,21 +315,81 @@ def dl_file(url: str, dst: str) -> str:
             f.write(chunk)
     return dst
 
-def send_result_email(to_email: str, title: str, tracks: list, job_url: str):
+def send_result_email(to_email: str, title: str, tracks: list, job_url: str,
+                      suno_error: str = None, pipeline_error: str = None, log_fn=None):
+    import traceback
+
+    def _log(msg):
+        print(msg)
+        if log_fn:
+            log_fn(msg)
+
+    if not AWS_KEY_ID or not AWS_SECRET:
+        _log("Email skipped: AWS credentials not configured")
+        return
+
+    recipients = list({to_email, ADMIN_EMAIL})
+
     try:
+        if tracks:
+            track_lines = "\n".join(f"  - {t['title']}" for t in tracks)
+            subject = f"Meowify: \"{title[:55]}\" is ready!"
+            user_body = (f'Your meow cover of "{title}" is ready!\n\n'
+                         f'{len(tracks)} track(s):\n{track_lines}\n\n'
+                         f'Listen here:\n{job_url}\n\n-- Meowify')
+            admin_body = (f'{to_email} generated a cover of "{title}".\n\n'
+                          f'{len(tracks)} track(s):\n{track_lines}\n\n'
+                          f'Listen here:\n{job_url}\n\n-- Meowify')
+        elif suno_error and "413" in suno_error:
+            subject = f"Meowify: \"{title[:50]}\" — fingerprint detected"
+            user_body = (f'Meowify couldn\'t generate a cover for "{title}".\n\n'
+                         f'Suno flagged this track for copyright fingerprinting.\n\n'
+                         f'Tip: this usually happens with very popular or well-known songs. '
+                         f'Try a less mainstream track — folk songs, indie artists, or lesser-known covers tend to work much better.\n\n'
+                         f'Job details:\n{job_url}\n\n-- Meowify')
+            admin_body = f'{to_email}: fingerprint on "{title}"\n\n{job_url}'
+        elif suno_error:
+            subject = f"Meowify: \"{title[:55]}\" — Suno failed"
+            user_body = (f'Meowify ran into a problem generating a cover for "{title}".\n\n'
+                         f'Error: {suno_error}\n\n'
+                         f'Job details:\n{job_url}\n\n-- Meowify')
+            admin_body = f'{to_email}: Suno failed for "{title}"\n\nError: {suno_error}\n\n{job_url}'
+        elif pipeline_error:
+            subject = f"Meowify: \"{title[:55]}\" — pipeline error"
+            user_body = (f'The Meowify pipeline failed for "{title}".\n\n'
+                         f'Error: {pipeline_error}\n\n'
+                         f'Job details:\n{job_url}\n\n-- Meowify')
+            admin_body = f'{to_email}: pipeline error for "{title}"\n\nError: {pipeline_error}\n\n{job_url}'
+        else:
+            return
+
         client = boto3.client("ses", region_name="us-east-1",
                               aws_access_key_id=AWS_KEY_ID, aws_secret_access_key=AWS_SECRET)
-        track_lines = "\n".join(f"  - {t['title']}" for t in tracks) or "  (none)"
-        body = f'Your meow cover of "{title}" is ready!\n\n{len(tracks)} track(s):\n{track_lines}\n\nListen here:\n{job_url}\n\n-- Meowify'
-        recipients = list({to_email, ADMIN_EMAIL})
-        client.send_email(
-            Source=SES_SENDER,
-            Destination={"ToAddresses": recipients},
-            Message={"Subject": {"Data": f"Meowify: {title[:60]} is ready!"},
-                     "Body": {"Text": {"Data": body}}},
-        )
+
+        def _send(to, body):
+            client.send_email(
+                Source=SES_SENDER,
+                Destination={"ToAddresses": [to]},
+                Message={"Subject": {"Data": subject},
+                         "Body": {"Text": {"Data": body}}},
+            )
+
+        sent = []
+        try:
+            _send(to_email, user_body)
+            sent.append(to_email)
+        except Exception as e:
+            _log(f"Email FAILED to {to_email}: {e}")
+        if to_email != ADMIN_EMAIL:
+            try:
+                _send(ADMIN_EMAIL, admin_body)
+                sent.append(ADMIN_EMAIL)
+            except Exception as e:
+                _log(f"Email FAILED to {ADMIN_EMAIL}: {e}\n{traceback.format_exc()}")
+        if sent:
+            _log(f"Email sent to {', '.join(sent)}")
     except Exception as e:
-        print(f"Email failed: {e}")
+        _log(f"Email FAILED: {e}\n{traceback.format_exc()}")
 
 
 # ── Jobs ───────────────────────────────────────────────────────────────────────
@@ -422,21 +564,33 @@ def run_pipeline(job_id: str, url: str, params: dict):
         job["status"] = "done"
         job["step"]   = "Complete"
         log("Pipeline complete")
+        save_job(job_id, job)
 
         job_url = f"{SITE_URL}/job/{job_id}"
-        send_result_email(job["owner_email"], info["title"], job["suno_tracks"], job_url)
+        send_result_email(job["owner_email"], info["title"], job["suno_tracks"], job_url,
+                          suno_error=job.get("suno_error"), log_fn=log)
 
     except Exception as e:
         job["status"] = "error"
         job["error"]  = str(e)
         job["step"]   = f"Error: {e}"
         job["logs"].append(f"[{time.strftime('%H:%M:%S')}] FATAL: {e}")
+        save_job(job_id, job)
+        job_url = f"{SITE_URL}/job/{job_id}"
+        title = (job.get("video_info") or {}).get("title", job.get("source_url", "unknown"))
+        send_result_email(job["owner_email"], title, [], job_url,
+                          pipeline_error=str(e), log_fn=log)
 
 
 # ── App ────────────────────────────────────────────────────────────────────────
 app = FastAPI()
 app.add_middleware(SessionMiddleware, secret_key=SESSION_SECRET, max_age=30 * 24 * 3600)
 app.mount("/static", StaticFiles(directory="static"), name="static")
+
+@app.get("/robots.txt", include_in_schema=False)
+async def robots():
+    return FileResponse("static/robots.txt", media_type="text/plain")
+
 templates = Jinja2Templates(directory="templates")
 templates.env.globals["enumerate"] = enumerate
 
@@ -507,10 +661,17 @@ async def logout(request: Request):
 
 
 # ── Routes: main ───────────────────────────────────────────────────────────────
+BOT_AGENTS = ("facebookexternalhit", "Twitterbot", "LinkedInBot", "WhatsApp", "Slackbot", "TelegramBot")
+
 @app.get("/")
 async def index(request: Request):
     user = current_user(request)
+    ua = request.headers.get("user-agent", "")
     if not user:
+        if any(b in ua for b in BOT_AGENTS):
+            return templates.TemplateResponse(request, "login.html", {
+                "auth_url": "#", "banner": BANNER, "error": None,
+            })
         return RedirectResponse("/login")
     return templates.TemplateResponse(request, "index.html", {
         "user": user, "banner": BANNER,
@@ -570,7 +731,23 @@ async def submit(
         "vocal_gender": vocal_gender, "style_weight": style_weight,
         "audio_weight": audio_weight, "weirdness": weirdness,
     }
+    save_job(job_id, JOBS[job_id])
     threading.Thread(target=run_pipeline, args=(job_id, url, params), daemon=True).start()
+
+    if user["email"] != ADMIN_EMAIL and AWS_KEY_ID and AWS_SECRET:
+        try:
+            boto3.client("ses", region_name="us-east-1",
+                         aws_access_key_id=AWS_KEY_ID, aws_secret_access_key=AWS_SECRET).send_email(
+                Source=SES_SENDER,
+                Destination={"ToAddresses": [ADMIN_EMAIL]},
+                Message={
+                    "Subject": {"Data": f"Meowify: {user['email']} started a job"},
+                    "Body": {"Text": {"Data": f"{user['name']} ({user['email']}) submitted a job.\n\nURL: {url}\n\nJob: {SITE_URL}/job/{job_id}"}},
+                },
+            )
+        except Exception as e:
+            print(f"Start notification failed: {e}")
+
     return RedirectResponse(f"/job/{job_id}", status_code=303)
 
 
@@ -580,9 +757,9 @@ async def job_page(job_id: str, request: Request):
     user = current_user(request)
     if not user:
         return RedirectResponse("/login")
-    job = JOBS.get(job_id)
+    job = JOBS.get(job_id) or load_job(job_id)
     if not job:
-        raise HTTPException(404, "Job not found (server may have restarted)")
+        raise HTTPException(404, "Job not found")
     if not can_access_job(user, job):
         raise HTTPException(403, "Access denied")
     return templates.TemplateResponse(request, "job.html", {
@@ -645,9 +822,155 @@ async def serve_file(job_id: str, key: str, request: Request, dl: bool = False):
 
     headers = {}
     if dl:
-        headers["Content-Disposition"] = f'attachment; filename="{filename}"'
+        ext = os.path.splitext(filename)[1] or (".mp3" if "mpeg" in media_type else ".wav")
+        safe = f"meowify_{job_id}_{key}{ext}"
+        headers["Content-Disposition"] = f'attachment; filename="{safe}"'
     return FileResponse(path, media_type=media_type, headers=headers)
 
+
+# ── Routes: credits via share ──────────────────────────────────────────────────
+@app.get("/credits")
+async def credits_page(request: Request):
+    user = current_user(request)
+    if not user:
+        return RedirectResponse("/login")
+    return templates.TemplateResponse(request, "credits.html", {"user": user})
+
+@app.post("/credits")
+async def credits_submit(request: Request, screenshot: UploadFile = File(...)):
+    user = current_user(request)
+    if not user:
+        return RedirectResponse("/login", status_code=303)
+
+    ext = (os.path.splitext(screenshot.filename or "")[1] or ".png").lower()
+    share_id = str(uuid.uuid4())[:12]
+    filename = f"{share_id}{ext}"
+    os.makedirs(SHARES_DIR, exist_ok=True)
+    path = os.path.join(SHARES_DIR, filename)
+    content = await screenshot.read()
+    with open(path, "wb") as f:
+        f.write(content)
+
+    con = _db()
+    con.execute("INSERT INTO shares (id, email, screenshot) VALUES (?,?,?)",
+                (share_id, user["email"], filename))
+    con.commit()
+    con.close()
+
+    # Email admin
+    approve_url = f"{SITE_URL}/admin/approve-share?id={share_id}"
+    view_url    = f"{SITE_URL}/admin/shares/{filename}"
+    try:
+        client = boto3.client("ses", region_name="us-east-1",
+                              aws_access_key_id=AWS_KEY_ID, aws_secret_access_key=AWS_SECRET)
+        client.send_email(
+            Source=SES_SENDER,
+            Destination={"ToAddresses": [ADMIN_EMAIL]},
+            Message={
+                "Subject": {"Data": f"Meowify: share submission from {user['name'] or user['email']}"},
+                "Body": {"Text": {"Data":
+                    f"{user['name']} ({user['email']}) submitted a social share screenshot.\n\n"
+                    f"View screenshot:\n{view_url}\n\n"
+                    f"Approve (+10 credits):\n{approve_url}\n\n-- Meowify"
+                }},
+            },
+        )
+    except Exception as e:
+        print(f"Share email failed: {e}")
+
+    return templates.TemplateResponse(request, "credits.html", {
+        "user": user, "submitted": True,
+    })
+
+@app.get("/admin/shares/{filename}")
+async def view_share(filename: str, request: Request):
+    user = current_user(request)
+    if not user or user["email"] != ADMIN_EMAIL:
+        raise HTTPException(403)
+    path = os.path.join(SHARES_DIR, filename)
+    if not os.path.exists(path):
+        raise HTTPException(404)
+    ext = os.path.splitext(filename)[1].lower()
+    media_type = "image/png" if ext == ".png" else "image/jpeg" if ext in (".jpg", ".jpeg") else "application/octet-stream"
+    return FileResponse(path, media_type=media_type)
+
+@app.get("/admin/approve-share")
+async def approve_share(request: Request, id: str):
+    user = current_user(request)
+    if not user or user["email"] != ADMIN_EMAIL:
+        raise HTTPException(403)
+    con = _db()
+    share = con.execute("SELECT * FROM shares WHERE id=?", (id,)).fetchone()
+    if not share:
+        con.close()
+        raise HTTPException(404, "Share not found")
+    if share["approved"]:
+        con.close()
+        return HTMLResponse("<p>Already approved.</p>")
+    con.execute("UPDATE users SET credits=credits+10 WHERE email=?", (share["email"],))
+    con.execute("UPDATE shares SET approved=1 WHERE id=?", (id,))
+    con.commit()
+    con.close()
+
+    # Notify the user
+    try:
+        client = boto3.client("ses", region_name="us-east-1",
+                              aws_access_key_id=AWS_KEY_ID, aws_secret_access_key=AWS_SECRET)
+        client.send_email(
+            Source=SES_SENDER,
+            Destination={"ToAddresses": [share["email"]]},
+            Message={
+                "Subject": {"Data": "Meowify: you've got 10 more credits!"},
+                "Body": {"Text": {"Data":
+                    f"Thanks for sharing Meowify!\n\n"
+                    f"We've added 10 credits to your account. Go make some cat covers:\n{SITE_URL}\n\n-- Meowify"
+                }},
+            },
+        )
+    except Exception as e:
+        print(f"Approval email failed: {e}")
+
+    return HTMLResponse(f"<p>✓ Approved! Added 10 credits to {share['email']}. <a href='/metrics'>Back to metrics</a></p>")
+
+# ── Routes: debug & metrics ────────────────────────────────────────────────────
+@app.get("/debug/jobs")
+async def debug_jobs(request: Request):
+    user = current_user(request)
+    if not user or user["email"] != ADMIN_EMAIL:
+        raise HTTPException(403)
+    import json
+    return HTMLResponse(f"<pre>{json.dumps({k: {**v, 'files': list(v['files'].keys())} for k, v in JOBS.items()}, indent=2, default=str)}</pre>")
+
+@app.get("/metrics")
+async def metrics(request: Request):
+    user = current_user(request)
+    if not user or user["email"] != ADMIN_EMAIL:
+        raise HTTPException(403)
+    users = all_users()
+    jobs_list = [
+        {
+            "id":     jid,
+            "owner":  j.get("owner_email", ""),
+            "title":  (j.get("video_info") or {}).get("title", j.get("source_url", "—")),
+            "status": j["status"],
+            "step":   j["step"],
+            "tracks": len(j.get("suno_tracks", [])),
+            "error":  j.get("error") or j.get("suno_error") or "",
+        }
+        for jid, j in JOBS.items()
+    ]
+    counts = {"running": 0, "done": 0, "error": 0}
+    for j in jobs_list:
+        counts[j["status"]] = counts.get(j["status"], 0) + 1
+    return templates.TemplateResponse(request, "metrics.html", {
+        "user": user,
+        "users": users,
+        "jobs": list(reversed(jobs_list)),
+        "counts": counts,
+        "total_users": len(users),
+        "total_credits_remaining": sum(u["credits"] for u in users if u["email"] != ADMIN_EMAIL),
+        "pending_shares": pending_shares(),
+    })
 
 # ── Routes: admin ──────────────────────────────────────────────────────────────
 @app.get("/admin/users")

@@ -1,0 +1,42 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="row justify-content-center">
+  <div class="col-lg-5">
+
+    {% if submitted %}
+    <div class="card p-4 text-center">
+      <div style="font-size:2.5rem;margin-bottom:.75rem">🐱</div>
+      <h5 class="fw-bold mb-2">Screenshot received!</h5>
+      <p class="text-muted mb-3">We'll review it shortly and add 10 credits to your account. You'll get an email when it's approved.</p>
+      <a href="/" class="btn btn-dark">Back to Meowify</a>
+    </div>
+
+    {% else %}
+    <h4 class="fw-bold mb-1" style="letter-spacing:-.03em">Get more credits</h4>
+    <p class="text-muted mb-4">Share Meowify on social media and upload a screenshot — we'll add <strong>10 credits</strong> to your account.</p>
+
+    <div class="card p-4 mb-4">
+      <h6 class="fw-semibold mb-3">How it works</h6>
+      <ol class="text-muted small mb-0" style="line-height:2">
+        <li>Post about Meowify on X, Instagram, Facebook, LinkedIn, or WhatsApp</li>
+        <li>Take a screenshot showing your post</li>
+        <li>Upload it below</li>
+        <li>We'll verify and add 10 credits — usually within a few hours</li>
+      </ol>
+    </div>
+
+    <div class="card p-4">
+      <form method="post" action="/credits" enctype="multipart/form-data">
+        <div class="mb-3">
+          <label class="form-label fw-semibold">Screenshot of your post</label>
+          <input type="file" name="screenshot" class="form-control" accept="image/*" required>
+          <div class="form-text">PNG, JPG or HEIC — any platform welcome</div>
+        </div>
+        <button type="submit" class="btn btn-dark w-100">Submit for review</button>
+      </form>
+    </div>
+    {% endif %}
+
+  </div>
+</div>
+{% endblock %}

@@ -4,7 +4,27 @@
   <div class="col-lg-8">
 
     {% if job.video_info %}
-    <h4 class="mb-3">{{ job.video_info.title }}</h4>
+    <div class="d-flex align-items-center gap-3 mb-4">
+      {% if job.video_info.id %}
+      {% set ts = job.files.get("chorus_start") %}
+      {% set sep = "&amp;" if "?" in job.source_url else "?" %}
+      <a href="{{ job.source_url }}{% if ts is not none %}{{ sep }}t={{ ts | int }}s{% endif %}"
+         target="_blank" rel="noopener" class="flex-shrink-0">
+        <img src="https://img.youtube.com/vi/{{ job.video_info.id }}/mqdefault.jpg"
+             style="width:140px;aspect-ratio:16/9;object-fit:cover;border-radius:8px;display:block">
+      </a>
+      {% endif %}
+      <div>
+        <div class="text-muted small mb-1">Meowifying</div>
+        <h5 class="fw-semibold mb-0" style="letter-spacing:-.02em">{{ job.video_info.title }}</h5>
+        {% if job.video_info.uploader %}
+        <div class="text-muted small">{{ job.video_info.uploader }}</div>
+        {% endif %}
+        {% if ts is not none %}
+        <div class="mt-1"><a href="{{ job.source_url }}{{ sep }}t={{ ts | int }}s" target="_blank" rel="noopener" class="text-muted small">▶ from {{ ts | int }}s on YouTube ↗</a></div>
+        {% endif %}
+      </div>
+    </div>
     {% endif %}
 
     <div id="job-status">
@@ -17,4 +37,17 @@
 
   </div>
 </div>
+<script>
+(function(){
+  var logsOpen = false;
+  document.body.addEventListener('htmx:beforeSwap', function() {
+    var d = document.getElementById('log-details');
+    logsOpen = d ? d.open : false;
+  });
+  document.body.addEventListener('htmx:afterSwap', function() {
+    var d = document.getElementById('log-details');
+    if (d && logsOpen) d.open = true;
+  });
+})();
+</script>
 {% endblock %}

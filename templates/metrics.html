@@ -1,0 +1,138 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="row justify-content-center">
+  <div class="col-lg-10">
+
+    <div class="d-flex align-items-center justify-content-between mb-4">
+      <h4 class="fw-bold mb-0" style="letter-spacing:-.03em">Metrics</h4>
+      <div class="d-flex gap-2">
+        <a href="/debug/jobs" class="btn btn-sm btn-outline-secondary">Debug jobs JSON</a>
+        <a href="/admin/users" class="btn btn-sm btn-outline-secondary">Manage credits</a>
+      </div>
+    </div>
+
+    {# ── Summary cards ── #}
+    <div class="row g-3 mb-4">
+      <div class="col-6 col-md-3">
+        <div class="card p-3 text-center">
+          <div style="font-size:2rem;font-weight:700;letter-spacing:-.04em">{{ total_users }}</div>
+          <div class="text-muted small">Users</div>
+        </div>
+      </div>
+      <div class="col-6 col-md-3">
+        <div class="card p-3 text-center">
+          <div style="font-size:2rem;font-weight:700;letter-spacing:-.04em">{{ counts.running }}</div>
+          <div class="text-muted small">Running now</div>
+        </div>
+      </div>
+      <div class="col-6 col-md-3">
+        <div class="card p-3 text-center">
+          <div style="font-size:2rem;font-weight:700;letter-spacing:-.04em">{{ counts.done }}</div>
+          <div class="text-muted small">Completed</div>
+        </div>
+      </div>
+      <div class="col-6 col-md-3">
+        <div class="card p-3 text-center">
+          <div style="font-size:2rem;font-weight:700;letter-spacing:-.04em">{{ counts.error or 0 }}</div>
+          <div class="text-muted small">Errors</div>
+        </div>
+      </div>
+    </div>
+
+    {# ── Jobs (this session) ── #}
+    <h6 class="text-muted fw-semibold text-uppercase small mb-2" style="letter-spacing:.08em">Jobs this session</h6>
+    {% if jobs %}
+    <div class="card mb-4">
+      <div class="table-responsive">
+        <table class="table table-sm mb-0" style="font-size:.85rem">
+          <thead class="table-light">
+            <tr>
+              <th>ID</th><th>Owner</th><th>Title</th><th>Status</th><th>Tracks</th><th>Detail</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for j in jobs %}
+            <tr>
+              <td class="font-monospace"><a href="/job/{{ j.id }}">{{ j.id }}</a></td>
+              <td class="text-muted">{{ j.owner.split('@')[0] }}</td>
+              <td style="max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="{{ j.title }}">{{ j.title }}</td>
+              <td>
+                {% if j.status == 'running' %}
+                  <span class="badge bg-warning text-dark">running</span>
+                {% elif j.status == 'done' %}
+                  <span class="badge bg-success">done</span>
+                {% else %}
+                  <span class="badge bg-danger">error</span>
+                {% endif %}
+              </td>
+              <td>{{ j.tracks if j.tracks else '—' }}</td>
+              <td class="text-muted" style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="{{ j.error or j.step }}">{{ j.error or j.step }}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+    {% else %}
+    <p class="text-muted small mb-4">No jobs since last restart.</p>
+    {% endif %}
+
+    {# ── Pending shares ── #}
+    {% if pending_shares %}
+    <h6 class="text-muted fw-semibold text-uppercase small mb-2" style="letter-spacing:.08em">Pending share approvals</h6>
+    <div class="card mb-4">
+      <div class="table-responsive">
+        <table class="table table-sm mb-0" style="font-size:.85rem">
+          <thead class="table-light">
+            <tr><th>User</th><th>Submitted</th><th>Screenshot</th><th></th></tr>
+          </thead>
+          <tbody>
+            {% for s in pending_shares %}
+            <tr>
+              <td>{{ s.email }}</td>
+              <td class="text-muted">{{ s.submitted_at[:16] }}</td>
+              <td><a href="/admin/shares/{{ s.screenshot }}" target="_blank">View</a></td>
+              <td><a href="/admin/approve-share?id={{ s.id }}" class="btn btn-sm btn-success">Approve +10</a></td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+    {% endif %}
+
+    {# ── Users ── #}
+    <h6 class="text-muted fw-semibold text-uppercase small mb-2" style="letter-spacing:.08em">Users</h6>
+    <div class="card">
+      <div class="table-responsive">
+        <table class="table table-sm mb-0" style="font-size:.85rem">
+          <thead class="table-light">
+            <tr>
+              <th>User</th><th>Email</th><th>Credits</th><th>Joined</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for u in users %}
+            <tr>
+              <td>
+                {% if u.picture %}
+                <img src="{{ u.picture }}" width="20" height="20" class="rounded-circle me-1" referrerpolicy="no-referrer">
+                {% endif %}
+                {{ u.name or '—' }}
+              </td>
+              <td class="text-muted">{{ u.email }}</td>
+              <td>
+                {% if u.email == 'stannor@gmail.com' %}∞
+                {% else %}{{ u.credits }}{% endif %}
+              </td>
+              <td class="text-muted">{{ u.created_at[:10] if u.created_at else '—' }}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+  </div>
+</div>
+{% endblock %}
