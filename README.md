@@ -17,10 +17,10 @@ yt-dlp pulls the audio from a URL and converts it to MP3. Only the audio stream 
 ### 2. Separate vocals from instrumental (Demucs)
 [Demucs](https://github.com/facebookresearch/demucs) (`htdemucs` model) splits the track into a clean vocal stem and an instrumental stem. This runs locally and takes a couple of minutes on CPU.
 
-### 3. Extract the chorus
-Processing a full 3-4 minute song is slow and expensive. Instead we extract a ~30 second section — ideally the first chorus, which is the most recognisable part of the song.
+### 3. Extract the section
+Processing a full song is slow and expensive. Instead we extract a short clip — typically 30 seconds — ideally the chorus or most recognisable part.
 
-Chorus detection works by computing RMS energy in 1-second windows across the first 3 minutes of audio, then finding the loudest sustained 30-second block between the 30s and 90s mark. If that block is more than 15% louder than the default window (45s–75s), it is used instead, starting 1 second early to catch the chorus pick-up. Otherwise we fall back to the default 45s–75s window.
+The app uses a simple energy-based heuristic to guess the chorus start, but the user can override both the start time and duration from the UI. When in doubt, set the start time manually.
 
 ### 4. Detect melody and synthesise meows (librosa)
 librosa's `pyin` algorithm analyses the vocal stem to extract the fundamental frequency (F0) frame by frame. Consecutive voiced frames are grouped into notes, each with a start time, duration, and pitch.
