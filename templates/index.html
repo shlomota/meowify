@@ -176,6 +176,8 @@ document.querySelectorAll('.example-btn').forEach(btn => {
     if (btn.dataset.dur) document.querySelector('[name="chorus_dur"]').value = btn.dataset.dur;
   });
 });
-document.querySelectorAll('[data-bs-toggle="popover"]').forEach(el => new bootstrap.Popover(el));
+document.addEventListener('DOMContentLoaded', () => {
+  document.querySelectorAll('[data-bs-toggle="popover"]').forEach(el => new bootstrap.Popover(el));
+});
 </script>
 {% endblock %}
