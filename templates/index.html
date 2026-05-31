@@ -25,10 +25,17 @@
           <div class="mb-3">
             <label class="form-label fw-semibold">
               YouTube URL
-              <span class="text-muted" style="cursor:help; font-weight:normal"
-                    title="YouTube download isn't 100% reliable — Google sometimes blocks our server with a bot check. If it fails, you'll be able to upload an MP3 directly on the next screen.">
+              <a href="#" role="button" tabindex="0"
+                 class="text-muted text-decoration-none ms-1"
+                 style="cursor:pointer; font-weight:normal"
+                 data-bs-toggle="popover"
+                 data-bs-trigger="focus"
+                 data-bs-placement="top"
+                 data-bs-title="Heads up"
+                 data-bs-content="YouTube download isn't 100% reliable — Google sometimes blocks our server with a bot check. If it fails, you'll be able to upload an MP3 file directly on the next screen."
+                 onclick="event.preventDefault()">
                 &#9432;
-              </span>
+              </a>
             </label>
             <input type="url" name="url" id="url-input" class="form-control form-control-lg"
                    placeholder="https://www.youtube.com/watch?v=..." required>
@@ -169,5 +176,6 @@ document.querySelectorAll('.example-btn').forEach(btn => {
     if (btn.dataset.dur) document.querySelector('[name="chorus_dur"]').value = btn.dataset.dur;
   });
 });
+document.querySelectorAll('[data-bs-toggle="popover"]').forEach(el => new bootstrap.Popover(el));
 </script>
 {% endblock %}
