@@ -31,7 +31,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from starlette.middleware.sessions import SessionMiddleware
 
-from downloader import download_youtube_as_mp3, get_video_info
+from downloader import download_youtube_as_mp3, get_video_info, sanitize_filename
 from meowify_v2 import meowify_v2
 
 # ── Constants ──────────────────────────────────────────────────────────────────
@@ -397,7 +397,7 @@ JOBS: dict = {}
 
 
 # ── Pipeline ───────────────────────────────────────────────────────────────────
-def run_pipeline(job_id: str, url: str, params: dict):
+def run_pipeline(job_id: str, url: str, params: dict, local_mp3_path: Optional[str] = None):
     job = JOBS[job_id]
 
     def log(msg: str):
@@ -411,15 +411,24 @@ def run_pipeline(job_id: str, url: str, params: dict):
         os.makedirs(OUTPUT_DIR, exist_ok=True)
         os.makedirs(WORK_DIR, exist_ok=True)
 
-        step("Fetching video info...")
-        info = get_video_info(url)
-        job["video_info"] = info
-        log(f"Title: {info['title']} ({info['duration']}s)")
+        if local_mp3_path:
+            step("Using uploaded audio...")
+            mp3_path = local_mp3_path
+            title = os.path.splitext(os.path.basename(mp3_path))[0]
+            info = {"title": title, "duration": 0, "thumbnail_url": "", "uploader": "(uploaded)", "id": ""}
+            job["video_info"] = info
+            log(f"File: {mp3_path} ({os.path.getsize(mp3_path)/1e6:.1f} MB)")
+            job["files"]["mp3"] = mp3_path
+        else:
+            step("Fetching video info...")
+            info = get_video_info(url)
+            job["video_info"] = info
+            log(f"Title: {info['title']} ({info['duration']}s)")
 
-        step("Downloading audio...")
-        mp3_path = download_youtube_as_mp3(url)
-        log(f"Downloaded: {mp3_path} ({os.path.getsize(mp3_path)/1e6:.1f} MB)")
-        job["files"]["mp3"] = mp3_path
+            step("Downloading audio...")
+            mp3_path = download_youtube_as_mp3(url)
+            log(f"Downloaded: {mp3_path} ({os.path.getsize(mp3_path)/1e6:.1f} MB)")
+            job["files"]["mp3"] = mp3_path
 
         base      = os.path.splitext(os.path.basename(mp3_path))[0]
         full_song = params["full_song"]
@@ -575,6 +584,22 @@ def run_pipeline(job_id: str, url: str, params: dict):
         job["error"]  = str(e)
         job["step"]   = f"Error: {e}"
         job["logs"].append(f"[{time.strftime('%H:%M:%S')}] FATAL: {e}")
+
+        # Refund credit if we never obtained the source audio (yt-dlp / info fetch failure).
+        # The user shouldn't be charged for our YouTube download failures.
+        owner = job.get("owner_email")
+        if (not local_mp3_path
+                and not job["files"].get("mp3")
+                and owner and owner != ADMIN_EMAIL):
+            try:
+                con = _db()
+                con.execute("UPDATE users SET credits = credits + 1 WHERE email = ?", (owner,))
+                con.commit()
+                con.close()
+                log(f"Credit refunded to {owner} (download-phase failure)")
+            except Exception as refund_err:
+                log(f"Credit refund failed: {refund_err}")
+
         save_job(job_id, job)
         job_url = f"{SITE_URL}/job/{job_id}"
         title = (job.get("video_info") or {}).get("title", job.get("source_url", "unknown"))
@@ -708,6 +733,16 @@ async def submit(
             "error": "No credits remaining. Contact stannor@gmail.com to get more.",
         })
 
+    params = {
+        "inst_pitch": inst_pitch, "vocal_pitch": vocal_pitch,
+        "speed": speed, "inst_gain": inst_gain, "vocal_gain": vocal_gain,
+        "meow_gain": meow_gain, "full_song": full_song == "on",
+        "chorus_start": chorus_start, "chorus_dur": chorus_dur,
+        "manual_start": manual_start, "suno_model": suno_model,
+        "meow_count": meow_count, "suno_style": suno_style,
+        "vocal_gender": vocal_gender, "style_weight": style_weight,
+        "audio_weight": audio_weight, "weirdness": weirdness,
+    }
     job_id = str(uuid.uuid4())[:8]
     JOBS[job_id] = {
         "status":      "running",
@@ -720,16 +755,7 @@ async def submit(
         "owner_email": user["email"],
         "error":       None,
         "suno_error":  None,
-    }
-    params = {
-        "inst_pitch": inst_pitch, "vocal_pitch": vocal_pitch,
-        "speed": speed, "inst_gain": inst_gain, "vocal_gain": vocal_gain,
-        "meow_gain": meow_gain, "full_song": full_song == "on",
-        "chorus_start": chorus_start, "chorus_dur": chorus_dur,
-        "manual_start": manual_start, "suno_model": suno_model,
-        "meow_count": meow_count, "suno_style": suno_style,
-        "vocal_gender": vocal_gender, "style_weight": style_weight,
-        "audio_weight": audio_weight, "weirdness": weirdness,
+        "params":      params,
     }
     save_job(job_id, JOBS[job_id])
     threading.Thread(target=run_pipeline, args=(job_id, url, params), daemon=True).start()
@@ -780,6 +806,61 @@ async def job_poll(job_id: str, request: Request):
     return templates.TemplateResponse(request, "_job_status.html", {
         "job": job, "job_id": job_id,
     })
+
+
+_DEFAULT_PIPELINE_PARAMS = {
+    "inst_pitch": 0, "vocal_pitch": 12, "speed": 1.2,
+    "inst_gain": 1.0, "vocal_gain": 0.5, "meow_gain": 0.7,
+    "full_song": False, "chorus_start": 45.0, "chorus_dur": 45.0,
+    "manual_start": 0.0, "suno_model": "V5_5", "meow_count": 120,
+    "suno_style": "pop", "vocal_gender": "(none)",
+    "style_weight": 0.0, "audio_weight": 0.0, "weirdness": 0.0,
+}
+_ALLOWED_UPLOAD_EXT = {".mp3", ".wav", ".m4a", ".ogg", ".flac", ".aac"}
+
+@app.post("/job/{job_id}/retry-upload")
+async def retry_upload(job_id: str, request: Request, audio: UploadFile = File(...)):
+    user = current_user(request)
+    if not user:
+        return RedirectResponse("/login", status_code=303)
+    job = JOBS.get(job_id) or load_job(job_id)
+    if not job or not can_access_job(user, job):
+        raise HTTPException(403)
+    if job.get("status") == "running":
+        return RedirectResponse(f"/job/{job_id}", status_code=303)
+
+    ext = (os.path.splitext(audio.filename or "")[1] or ".mp3").lower()
+    if ext not in _ALLOWED_UPLOAD_EXT:
+        ext = ".mp3"
+    base_name = sanitize_filename(os.path.splitext(audio.filename or "upload")[0]) or "upload"
+    os.makedirs("downloads", exist_ok=True)
+    upload_path = os.path.abspath(os.path.join("downloads", f"{base_name}_{job_id}{ext}"))
+    content = await audio.read()
+    with open(upload_path, "wb") as f:
+        f.write(content)
+
+    params = (job.get("params") if isinstance(job.get("params"), dict) else None) or _DEFAULT_PIPELINE_PARAMS.copy()
+    JOBS[job_id] = {
+        "status":      "running",
+        "step":        "Starting (uploaded audio)...",
+        "logs":        [],
+        "files":       {},
+        "suno_tracks": [],
+        "video_info":  None,
+        "source_url":  job.get("source_url"),
+        "owner_email": job.get("owner_email"),
+        "error":       None,
+        "suno_error":  None,
+        "params":      params,
+    }
+    save_job(job_id, JOBS[job_id])
+    threading.Thread(
+        target=run_pipeline,
+        args=(job_id, job.get("source_url") or "", params),
+        kwargs={"local_mp3_path": upload_path},
+        daemon=True,
+    ).start()
+    return RedirectResponse(f"/job/{job_id}", status_code=303)
 
 
 # ── Routes: files ──────────────────────────────────────────────────────────────

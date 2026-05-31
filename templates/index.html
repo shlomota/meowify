@@ -23,7 +23,13 @@
         <form method="post" action="/submit" id="submit-form">
 
           <div class="mb-3">
-            <label class="form-label fw-semibold">YouTube URL</label>
+            <label class="form-label fw-semibold">
+              YouTube URL
+              <span class="text-muted" style="cursor:help; font-weight:normal"
+                    title="YouTube download isn't 100% reliable — Google sometimes blocks our server with a bot check. If it fails, you'll be able to upload an MP3 directly on the next screen.">
+                &#9432;
+              </span>
+            </label>
             <input type="url" name="url" id="url-input" class="form-control form-control-lg"
                    placeholder="https://www.youtube.com/watch?v=..." required>
             <div class="mt-2 d-flex flex-wrap gap-2">

@@ -24,6 +24,22 @@
   <div class="alert alert-danger">
     <strong>Pipeline failed:</strong> {{ job.error }}
   </div>
+
+  <div class="card mb-3">
+    <div class="card-body">
+      <div class="fw-semibold mb-1">Retry with an uploaded audio file</div>
+      <p class="text-muted small mb-2">
+        YouTube download isn't 100% reliable. Grab the MP3 yourself (any YouTube-to-MP3 site works)
+        and upload it here — we'll skip the download and run the rest of the pipeline. No extra credit charged.
+      </p>
+      <form method="post" action="/job/{{ job_id }}/retry-upload" enctype="multipart/form-data">
+        <input type="file" name="audio" accept="audio/*,.mp3,.wav,.m4a,.ogg,.flac,.aac"
+               class="form-control form-control-sm mb-2" required>
+        <button type="submit" class="btn btn-dark btn-sm">Retry with this audio</button>
+      </form>
+    </div>
+  </div>
+
   {% if job.logs %}
   <details open>
     <summary class="text-muted small">Logs</summary>
