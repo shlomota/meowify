@@ -3,11 +3,12 @@
 <div class="row justify-content-center">
   <div class="col-lg-8">
 
+    {% set ts = job.files.get("chorus_start") %}
+    {% set sep = "&amp;" if "?" in job.source_url else "?" %}
+
     {% if job.video_info %}
     <div class="d-flex align-items-center gap-3 mb-4">
       {% if job.video_info.id %}
-      {% set ts = job.files.get("chorus_start") %}
-      {% set sep = "&amp;" if "?" in job.source_url else "?" %}
       <a href="{{ job.source_url }}{% if ts is not none %}{{ sep }}t={{ ts | int }}s{% endif %}"
          target="_blank" rel="noopener" class="flex-shrink-0">
         <img src="https://img.youtube.com/vi/{{ job.video_info.id }}/mqdefault.jpg"
