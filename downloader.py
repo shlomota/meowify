@@ -24,15 +24,15 @@ def get_video_info(url: str) -> dict:
     yt_dlp_bin = os.path.join(os.path.dirname(sys.executable), "yt-dlp")
     if not os.path.exists(yt_dlp_bin):
         yt_dlp_bin = shutil.which("yt-dlp") or "yt-dlp"
-    cmd = [
-        yt_dlp_bin,
+    cmd = [yt_dlp_bin]
+    if os.path.exists(COOKIES_FILE):
+        cmd += ["--cookies", COOKIES_FILE]
+    cmd += [
         "--no-js-runtimes", "--js-runtimes", "node",
         "--remote-components", "ejs:github",
         "--dump-json", "--no-playlist",
+        url,
     ]
-    if os.path.exists(COOKIES_FILE):
-        cmd += ["--cookies", COOKIES_FILE]
-    cmd.append(url)
     result = subprocess.run(cmd, capture_output=True, text=True)
     if result.returncode != 0:
         raise RuntimeError(result.stderr.strip().splitlines()[-1] if result.stderr.strip() else "yt-dlp failed")
@@ -59,8 +59,10 @@ def download_youtube_as_mp3(url: str, output_dir: str = "downloads") -> str:
     yt_dlp_bin = os.path.join(os.path.dirname(sys.executable), "yt-dlp")
     if not os.path.exists(yt_dlp_bin):
         yt_dlp_bin = shutil.which("yt-dlp") or "yt-dlp"
-    cmd = [
-        yt_dlp_bin,
+    cmd = [yt_dlp_bin]
+    if os.path.exists(COOKIES_FILE):
+        cmd += ["--cookies", COOKIES_FILE]
+    cmd += [
         "--no-js-runtimes", "--js-runtimes", "node",
         "--remote-components", "ejs:github",
         "-f", "bestaudio/best",
@@ -68,10 +70,8 @@ def download_youtube_as_mp3(url: str, output_dir: str = "downloads") -> str:
         "--audio-format", "mp3",
         "--audio-quality", "192",
         "-o", output_template,
+        url,
     ]
-    if os.path.exists(COOKIES_FILE):
-        cmd += ["--cookies", COOKIES_FILE]
-    cmd.append(url)
 
     result = subprocess.run(cmd, capture_output=False, text=True)
     if result.returncode != 0:
