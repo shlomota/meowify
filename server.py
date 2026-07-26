@@ -7,6 +7,7 @@ Run with: uvicorn server:app --host 127.0.0.1 --port 8503 --workers 1
 import contextlib
 import io
 import json as _json
+import logging
 import os
 import secrets
 import sqlite3
@@ -17,6 +18,16 @@ import time
 import uuid
 from pathlib import Path
 from typing import Optional
+
+logging.basicConfig(
+    level=logging.DEBUG,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.FileHandler('server.log'),
+        logging.StreamHandler(sys.stdout),
+    ]
+)
+logger = logging.getLogger(__name__)
 
 import boto3
 import librosa
@@ -825,18 +836,31 @@ async def submit(
 # ── Routes: job ────────────────────────────────────────────────────────────────
 @app.get("/job/{job_id}")
 async def job_page(job_id: str, request: Request):
-    user = current_user(request)
-    if not user:
-        return RedirectResponse(f"/login?next=/job/{job_id}")
-    job = JOBS.get(job_id) or load_job(job_id)
-    if not job:
-        raise HTTPException(404, "Job not found")
-    if not can_access_job(user, job):
-        raise HTTPException(403, "Access denied")
-    return templates.TemplateResponse(request, "job.html", {
-        "user": user, "banner": BANNER,
-        "job": job, "job_id": job_id,
-    })
+    try:
+        logger.debug(f"Loading job page for {job_id}")
+        user = current_user(request)
+        if not user:
+            logger.debug(f"No user for job {job_id}, redirecting to login")
+            return RedirectResponse(f"/login?next=/job/{job_id}")
+        logger.debug(f"User {user['email']} accessing job {job_id}")
+        job = JOBS.get(job_id) or load_job(job_id)
+        if not job:
+            logger.warning(f"Job {job_id} not found")
+            raise HTTPException(404, "Job not found")
+        logger.debug(f"Job {job_id} loaded: status={job.get('status')}")
+        if not can_access_job(user, job):
+            logger.warning(f"User {user['email']} cannot access job {job_id}")
+            raise HTTPException(403, "Access denied")
+        logger.debug(f"Rendering job.html for {job_id}")
+        return templates.TemplateResponse(request, "job.html", {
+            "user": user, "banner": BANNER,
+            "job": job, "job_id": job_id,
+        })
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error loading job {job_id}: {e}", exc_info=True)
+        raise HTTPException(500, f"Internal error: {str(e)}")
 
 @app.get("/job/{job_id}/poll")
 async def job_poll(job_id: str, request: Request):
