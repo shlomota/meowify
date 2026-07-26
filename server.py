@@ -721,8 +721,8 @@ async def index(request: Request):
 @app.post("/submit")
 async def submit(
     request: Request,
-    url: str          = Form(""),
-    audio: Optional[UploadFile] = File(None),
+    url: str          = Form(default=""),
+    audio: Optional[UploadFile] = File(default=None),
     manual_start: float = Form(0),
     inst_pitch: int   = Form(0),
     vocal_pitch: int  = Form(12),
