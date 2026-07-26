@@ -721,7 +721,8 @@ async def index(request: Request):
 @app.post("/submit")
 async def submit(
     request: Request,
-    url: str          = Form(...),
+    url: str          = Form(""),
+    audio: Optional[UploadFile] = File(None),
     manual_start: float = Form(0),
     inst_pitch: int   = Form(0),
     vocal_pitch: int  = Form(12),
@@ -749,6 +750,31 @@ async def submit(
             "error": "No credits remaining. Contact stannor@gmail.com to get more.",
         })
 
+    # Handle file upload or URL
+    local_mp3_path = None
+    source_description = url
+    if audio and audio.filename:
+        ext = (os.path.splitext(audio.filename or "")[1] or ".mp3").lower()
+        if ext not in _ALLOWED_UPLOAD_EXT:
+            ext = ".mp3"
+        base_name = sanitize_filename(os.path.splitext(audio.filename or "upload")[0]) or "upload"
+        os.makedirs("downloads", exist_ok=True)
+        job_id = str(uuid.uuid4())[:8]
+        upload_path = os.path.abspath(os.path.join("downloads", f"{base_name}_{job_id}{ext}"))
+        content = await audio.read()
+        with open(upload_path, "wb") as f:
+            f.write(content)
+        local_mp3_path = upload_path
+        source_description = f"(uploaded: {base_name})"
+        url = ""
+    elif not url:
+        return templates.TemplateResponse(request, "index.html", {
+            "user": user, "banner": BANNER,
+            "error": "Please provide a YouTube URL or upload an MP3 file.",
+        })
+    else:
+        job_id = str(uuid.uuid4())[:8]
+
     params = {
         "inst_pitch": inst_pitch, "vocal_pitch": vocal_pitch,
         "speed": speed, "inst_gain": inst_gain, "vocal_gain": vocal_gain,
@@ -759,10 +785,9 @@ async def submit(
         "vocal_gender": vocal_gender, "style_weight": style_weight,
         "audio_weight": audio_weight, "weirdness": weirdness,
     }
-    job_id = str(uuid.uuid4())[:8]
     JOBS[job_id] = {
         "status":      "running",
-        "step":        "Starting...",
+        "step":        "Starting..." if url else "Starting (uploaded audio)...",
         "logs":        [],
         "files":       {},
         "suno_tracks": [],
@@ -774,7 +799,12 @@ async def submit(
         "params":      params,
     }
     save_job(job_id, JOBS[job_id])
-    threading.Thread(target=run_pipeline, args=(job_id, url, params), daemon=True).start()
+    threading.Thread(
+        target=run_pipeline,
+        args=(job_id, url, params),
+        kwargs={"local_mp3_path": local_mp3_path} if local_mp3_path else {},
+        daemon=True,
+    ).start()
 
     if user["email"] != ADMIN_EMAIL and AWS_KEY_ID and AWS_SECRET:
         try:
@@ -784,7 +814,7 @@ async def submit(
                 Destination={"ToAddresses": [ADMIN_EMAIL]},
                 Message={
                     "Subject": {"Data": f"Meowify: {user['email']} started a job"},
-                    "Body": {"Text": {"Data": f"{user['name']} ({user['email']}) submitted a job.\n\nURL: {url}\n\nJob: {SITE_URL}/job/{job_id}"}},
+                    "Body": {"Text": {"Data": f"{user['name']} ({user['email']}) submitted a job.\n\nSource: {source_description}\n\nJob: {SITE_URL}/job/{job_id}"}},
                 },
             )
         except Exception as e:

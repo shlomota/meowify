@@ -20,9 +20,18 @@
 
     <div class="card shadow-sm mb-4">
       <div class="card-body p-4">
-        <form method="post" action="/submit" id="submit-form">
+        <form method="post" action="/submit" id="submit-form" enctype="multipart/form-data">
 
-          <div class="mb-3">
+          {# Tab toggle #}
+          <div class="btn-group mb-3" role="group">
+            <input type="radio" class="btn-check" name="source-mode" id="mode-url" value="url" checked>
+            <label class="btn btn-outline-secondary" for="mode-url">YouTube</label>
+            <input type="radio" class="btn-check" name="source-mode" id="mode-upload" value="upload">
+            <label class="btn btn-outline-secondary" for="mode-upload">Upload MP3</label>
+          </div>
+
+          {# YouTube input #}
+          <div id="url-section" class="mb-3">
             <label class="form-label fw-semibold">
               YouTube URL
               <a href="#" role="button" tabindex="0"
@@ -38,7 +47,7 @@
               </a>
             </label>
             <input type="url" name="url" id="url-input" class="form-control form-control-lg"
-                   placeholder="https://www.youtube.com/watch?v=..." required>
+                   placeholder="https://www.youtube.com/watch?v=...">
             <div class="mt-2 d-flex flex-wrap gap-2">
               <span class="text-muted small me-1">Try:</span>
               {% set examples = [
@@ -55,6 +64,14 @@
               </button>
               {% endfor %}
             </div>
+          </div>
+
+          {# Upload input #}
+          <div id="upload-section" class="mb-3" style="display:none">
+            <label class="form-label fw-semibold">MP3 File</label>
+            <input type="file" name="audio" id="audio-input" class="form-control form-control-lg"
+                   accept="audio/*,.mp3,.wav,.m4a,.ogg,.flac,.aac">
+            <small class="text-muted d-block mt-2">Supported: MP3, WAV, M4A, OGG, FLAC, AAC</small>
           </div>
 
           <div class="row g-2 align-items-end mb-3">
@@ -169,6 +186,26 @@ function toggleChorus(cb) {
   document.getElementById('chorus-fields').style.opacity = cb.checked ? '0.4' : '1';
   document.querySelectorAll('#chorus-fields input').forEach(el => el.disabled = cb.checked);
 }
+
+function updateSourceMode() {
+  const isUpload = document.getElementById('mode-upload').checked;
+  document.getElementById('url-section').style.display = isUpload ? 'none' : 'block';
+  document.getElementById('upload-section').style.display = isUpload ? 'block' : 'none';
+  const urlInput = document.getElementById('url-input');
+  const audioInput = document.getElementById('audio-input');
+  if (isUpload) {
+    urlInput.removeAttribute('required');
+    audioInput.setAttribute('required', '');
+  } else {
+    urlInput.setAttribute('required', '');
+    audioInput.removeAttribute('required');
+  }
+}
+
+document.querySelectorAll('input[name="source-mode"]').forEach(radio => {
+  radio.addEventListener('change', updateSourceMode);
+});
+
 document.querySelectorAll('.example-btn').forEach(btn => {
   btn.addEventListener('click', () => {
     document.getElementById('url-input').value = btn.dataset.url;
@@ -176,6 +213,7 @@ document.querySelectorAll('.example-btn').forEach(btn => {
     if (btn.dataset.dur) document.querySelector('[name="chorus_dur"]').value = btn.dataset.dur;
   });
 });
+
 document.addEventListener('DOMContentLoaded', () => {
   document.querySelectorAll('[data-bs-toggle="popover"]').forEach(el => new bootstrap.Popover(el));
 });
