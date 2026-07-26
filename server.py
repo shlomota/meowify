@@ -66,10 +66,22 @@ _ENV = _load_env()
 GOOGLE_CLIENT_ID     = _ENV.get("GOOGLE_CLIENT_ID", "")
 GOOGLE_CLIENT_SECRET = _ENV.get("GOOGLE_CLIENT_SECRET", "")
 OAUTH_REDIRECT_URI   = _ENV.get("OAUTH_REDIRECT_URI", f"{SITE_URL}/oauth/callback")
-SESSION_SECRET       = _ENV.get("SESSION_SECRET", secrets.token_hex(32))
-KIE_KEY              = _ENV.get("KIE_API_KEY", "")
-AWS_KEY_ID           = _ENV.get("AWS_ACCESS_KEY_ID", "")
-AWS_SECRET           = _ENV.get("AWS_SECRET_ACCESS_KEY", "")
+
+# Persistent session secret — stored in file if not provided via environment
+def _get_session_secret():
+    if "SESSION_SECRET" in _ENV:
+        return _ENV["SESSION_SECRET"]
+    secret_file = Path(".session_secret")
+    if secret_file.exists():
+        return secret_file.read_text().strip()
+    secret = secrets.token_hex(32)
+    secret_file.write_text(secret)
+    return secret
+
+SESSION_SECRET = _get_session_secret()
+KIE_KEY        = _ENV.get("KIE_API_KEY", "")
+AWS_KEY_ID     = _ENV.get("AWS_ACCESS_KEY_ID", "")
+AWS_SECRET     = _ENV.get("AWS_SECRET_ACCESS_KEY", "")
 
 
 # ── Database ───────────────────────────────────────────────────────────────────
@@ -652,6 +664,8 @@ async def login_page(request: Request):
         return RedirectResponse("/")
     state = secrets.token_urlsafe(16)
     request.session["oauth_state"] = state
+    next_url = request.query_params.get("next", "/")
+    request.session["oauth_next"] = next_url
     return templates.TemplateResponse(request, "login.html", {
         "auth_url": google_auth_url(state),
         "banner": BANNER,
@@ -677,7 +691,9 @@ async def oauth_callback(request: Request, code: str = None, error: str = None, 
         request.session["email"] = user["email"]
     except Exception as e:
         return RedirectResponse(f"/login?error={e}")
-    return RedirectResponse("/")
+    next_url = request.session.get("oauth_next", "/")
+    request.session.pop("oauth_next", None)
+    return RedirectResponse(next_url)
 
 @app.get("/logout")
 async def logout(request: Request):
@@ -782,7 +798,7 @@ async def submit(
 async def job_page(job_id: str, request: Request):
     user = current_user(request)
     if not user:
-        return RedirectResponse("/login")
+        return RedirectResponse(f"/login?next=/job/{job_id}")
     job = JOBS.get(job_id) or load_job(job_id)
     if not job:
         raise HTTPException(404, "Job not found")
