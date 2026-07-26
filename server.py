@@ -753,13 +753,14 @@ async def submit(
     # Handle file upload or URL
     local_mp3_path = None
     source_description = url
+    job_id = str(uuid.uuid4())[:8]
+
     if audio and audio.filename:
         ext = (os.path.splitext(audio.filename or "")[1] or ".mp3").lower()
         if ext not in _ALLOWED_UPLOAD_EXT:
             ext = ".mp3"
         base_name = sanitize_filename(os.path.splitext(audio.filename or "upload")[0]) or "upload"
         os.makedirs("downloads", exist_ok=True)
-        job_id = str(uuid.uuid4())[:8]
         upload_path = os.path.abspath(os.path.join("downloads", f"{base_name}_{job_id}{ext}"))
         content = await audio.read()
         with open(upload_path, "wb") as f:
@@ -772,8 +773,6 @@ async def submit(
             "user": user, "banner": BANNER,
             "error": "Please provide a YouTube URL or upload an MP3 file.",
         })
-    else:
-        job_id = str(uuid.uuid4())[:8]
 
     params = {
         "inst_pitch": inst_pitch, "vocal_pitch": vocal_pitch,
