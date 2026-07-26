@@ -24,14 +24,22 @@
 
           {# Tab toggle #}
           <div class="btn-group mb-3" role="group">
-            <input type="radio" class="btn-check" name="source-mode" id="mode-url" value="url" checked>
-            <label class="btn btn-outline-secondary" for="mode-url">YouTube</label>
-            <input type="radio" class="btn-check" name="source-mode" id="mode-upload" value="upload">
+            <input type="radio" class="btn-check" name="source-mode" id="mode-upload" value="upload" checked>
             <label class="btn btn-outline-secondary" for="mode-upload">Upload MP3</label>
+            <input type="radio" class="btn-check" name="source-mode" id="mode-url" value="url">
+            <label class="btn btn-outline-secondary" for="mode-url">YouTube</label>
+          </div>
+
+          {# Upload input #}
+          <div id="upload-section" class="mb-3">
+            <label class="form-label fw-semibold">MP3 File</label>
+            <input type="file" name="audio" id="audio-input" class="form-control form-control-lg"
+                   accept="audio/*,.mp3,.wav,.m4a,.ogg,.flac,.aac" required>
+            <small class="text-muted d-block mt-2">Supported: MP3, WAV, M4A, OGG, FLAC, AAC</small>
           </div>
 
           {# YouTube input #}
-          <div id="url-section" class="mb-3">
+          <div id="url-section" class="mb-3" style="display:none">
             <label class="form-label fw-semibold">
               YouTube URL
               <a href="#" role="button" tabindex="0"
@@ -64,14 +72,6 @@
               </button>
               {% endfor %}
             </div>
-          </div>
-
-          {# Upload input #}
-          <div id="upload-section" class="mb-3" style="display:none">
-            <label class="form-label fw-semibold">MP3 File</label>
-            <input type="file" name="audio" id="audio-input" class="form-control form-control-lg"
-                   accept="audio/*,.mp3,.wav,.m4a,.ogg,.flac,.aac">
-            <small class="text-muted d-block mt-2">Supported: MP3, WAV, M4A, OGG, FLAC, AAC</small>
           </div>
 
           <div class="row g-2 align-items-end mb-3">
