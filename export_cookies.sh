@@ -3,7 +3,7 @@ set -e
 
 SERVER="ubuntu@carlebot.us"
 KEY="$HOME/Downloads/taami.pem"
-REMOTE_DIR="/home/ubuntu/meowify"
+REMOTE_DIR="/home/ubuntu/meowify-v2"
 COOKIE_FILE="yt_cookies.txt"
 
 echo "==> Exporting YouTube cookies from local Chrome profile..."
@@ -14,6 +14,11 @@ yt-dlp \
   "https://www.youtube.com/watch?v=dQw4w9WgXcQ" \
   --skip-download >/dev/null 2>&1
 
+if [ ! -f "$COOKIE_FILE" ]; then
+  echo "ERROR: Failed to export cookies. Make sure Chrome is closed and try again."
+  exit 1
+fi
+
 echo "==> Uploading cookies to server..."
 
 scp -i "$KEY" "$COOKIE_FILE" "$SERVER:$REMOTE_DIR/"
@@ -23,10 +28,10 @@ echo "==> Testing yt-dlp on remote server..."
 ssh -i "$KEY" "$SERVER" << 'EOF'
 set -e
 
-pip install -U yt-dlp >/dev/null 2>&1 || true
+cd ~/meowify-v2
 
 yt-dlp \
-  --cookies /home/ubuntu/meowify/yt_cookies.txt \
+  --cookies ~/meowify-v2/yt_cookies.txt \
   --skip-download \
   "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
 
