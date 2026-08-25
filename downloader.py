@@ -66,14 +66,14 @@ def download_youtube_as_mp3(url: str, output_dir: str = "downloads", api_key: st
     if not download_url:
         raise RuntimeError(f"No download URL in API response: {data}")
 
-    for attempt in range(30):
+    for attempt in range(60):
         try:
             mp3_response = requests.head(download_url, timeout=5)
             if mp3_response.status_code == 200:
                 break
         except Exception:
             pass
-        if attempt < 29:
+        if attempt < 59:
             time.sleep(2)
 
     info = get_video_info(url)
