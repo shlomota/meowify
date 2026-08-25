@@ -1,92 +1,91 @@
 import json as _json
 import os
 import re
-import shutil
-import subprocess
-import sys
+import time
+import urllib.parse
+import urllib.request
+
+import requests
 
 
 def sanitize_filename(name: str) -> str:
     return re.sub(r'[^\w\s-]', '', name).strip().replace(' ', '_')[:80]
 
 
-COOKIES_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "yt_cookies.txt")
-
-
-def _base_opts() -> dict:
-    opts = {'quiet': True, 'no_warnings': True}
-    if os.path.exists(COOKIES_FILE):
-        opts['cookiefile'] = COOKIES_FILE
-    return opts
+def _extract_video_id(url: str) -> str:
+    parsed = urllib.parse.urlparse(url)
+    if 'youtube.com' in parsed.netloc:
+        params = urllib.parse.parse_qs(parsed.query)
+        return params.get('v', [''])[0]
+    elif 'youtu.be' in parsed.netloc:
+        return parsed.path.lstrip('/')
+    raise ValueError(f"Invalid YouTube URL: {url}")
 
 
 def get_video_info(url: str) -> dict:
-    yt_dlp_bin = os.path.join(os.path.dirname(sys.executable), "yt-dlp")
-    if not os.path.exists(yt_dlp_bin):
-        yt_dlp_bin = shutil.which("yt-dlp") or "yt-dlp"
-    cmd = [yt_dlp_bin]
-    if os.path.exists(COOKIES_FILE):
-        cmd += ["--cookies", COOKIES_FILE]
-    cmd += [
-        "--no-js-runtimes", "--js-runtimes", "node",
-        "--remote-components", "ejs:github",
-        "--dump-json", "--no-playlist",
-        url,
-    ]
-    result = subprocess.run(cmd, capture_output=True, text=True)
-    if result.returncode != 0:
-        raise RuntimeError(result.stderr.strip().splitlines()[-1] if result.stderr.strip() else "yt-dlp failed")
-    info = _json.loads(result.stdout)
-    return {
-        'title': info.get('title', 'Unknown'),
-        'duration': info.get('duration', 0),
-        'thumbnail_url': info.get('thumbnail', ''),
-        'uploader': info.get('uploader', ''),
-        'id': info.get('id', ''),
+    video_id = _extract_video_id(url)
+    try:
+        response = requests.get(
+            f"https://www.youtube.com/oembed?url=https://youtube.com/watch?v={video_id}&format=json",
+            timeout=5
+        )
+        data = response.json()
+        return {
+            'title': data.get('title', 'Unknown'),
+            'duration': 0,
+            'thumbnail_url': data.get('thumbnail_url', ''),
+            'uploader': data.get('author_name', ''),
+            'id': video_id,
+        }
+    except Exception as e:
+        return {'title': 'Unknown', 'duration': 0, 'thumbnail_url': '', 'uploader': '', 'id': video_id}
+
+
+def download_youtube_as_mp3(url: str, output_dir: str = "downloads", api_key: str = "") -> str:
+    os.makedirs(output_dir, exist_ok=True)
+
+    video_id = _extract_video_id(url)
+    if not api_key:
+        api_key = os.getenv("RAPIDAPI_KEY", "")
+    if not api_key:
+        raise RuntimeError("RAPIDAPI_KEY not provided")
+
+    headers = {
+        "x-rapidapi-host": "youtube-mp3-audio-video-downloader.p.rapidapi.com",
+        "x-rapidapi-key": api_key,
+        "Content-Type": "application/json"
     }
 
+    api_url = f"https://youtube-mp3-audio-video-downloader.p.rapidapi.com/get_mp3_download_link/{video_id}?quality=low&wait_until_the_file_is_ready=false"
+    response = requests.get(api_url, headers=headers, timeout=10)
+    if response.status_code != 200:
+        raise RuntimeError(f"API error: {response.status_code} {response.text}")
 
-def download_youtube_as_mp3(url: str, output_dir: str = "downloads") -> str:
-    os.makedirs(output_dir, exist_ok=True)
+    data = response.json()
+    download_url = data.get('file') or data.get('reserved_file')
+    if not download_url:
+        raise RuntimeError(f"No download URL in API response: {data}")
+
+    for attempt in range(30):
+        try:
+            mp3_response = requests.head(download_url, timeout=5)
+            if mp3_response.status_code == 200:
+                break
+        except Exception:
+            pass
+        if attempt < 29:
+            time.sleep(2)
 
     info = get_video_info(url)
     safe_name = sanitize_filename(info['title'])
-    output_template = os.path.join(output_dir, f"{safe_name}.%(ext)s")
-
-    # Use CLI directly — js-runtimes and remote-components flags aren't
-    # reliably available in the Python API but are needed for n-challenge solving.
-    # Prefer the venv's yt-dlp to ensure correct version
-    yt_dlp_bin = os.path.join(os.path.dirname(sys.executable), "yt-dlp")
-    if not os.path.exists(yt_dlp_bin):
-        yt_dlp_bin = shutil.which("yt-dlp") or "yt-dlp"
-    cmd = [yt_dlp_bin]
-    if os.path.exists(COOKIES_FILE):
-        cmd += ["--cookies", COOKIES_FILE]
-    cmd += [
-        "--no-js-runtimes", "--js-runtimes", "node",
-        "--remote-components", "ejs:github",
-        "-f", "bestaudio/best",
-        "--extract-audio",
-        "--audio-format", "mp3",
-        "--audio-quality", "192",
-        "-o", output_template,
-        url,
-    ]
-
-    result = subprocess.run(cmd, capture_output=False, text=True)
-    if result.returncode != 0:
-        raise RuntimeError(f"yt-dlp failed (exit {result.returncode})")
-
     mp3_path = os.path.join(output_dir, f"{safe_name}.mp3")
-    if not os.path.exists(mp3_path):
-        candidates = [
-            os.path.join(output_dir, f)
-            for f in os.listdir(output_dir)
-            if f.endswith('.mp3')
-        ]
-        if not candidates:
-            raise FileNotFoundError(f"MP3 not found in {output_dir} after download")
-        mp3_path = max(candidates, key=os.path.getmtime)
+
+    mp3_response = requests.get(download_url, timeout=30)
+    if mp3_response.status_code != 200:
+        raise RuntimeError(f"Download failed: {mp3_response.status_code}")
+
+    with open(mp3_path, 'wb') as f:
+        f.write(mp3_response.content)
 
     return os.path.abspath(mp3_path)
 
@@ -99,5 +98,8 @@ if __name__ == "__main__":
     print(f"  Duration: {info['duration']}s")
 
     print("\nDownloading as MP3...")
-    path = download_youtube_as_mp3(url)
-    print(f"\nSaved to: {path}")
+    try:
+        path = download_youtube_as_mp3(url)
+        print(f"\nSaved to: {path}")
+    except Exception as e:
+        print(f"Error: {e}")

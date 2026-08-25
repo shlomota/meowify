@@ -91,6 +91,7 @@ def _get_session_secret():
 
 SESSION_SECRET = _get_session_secret()
 KIE_KEY        = _ENV.get("KIE_API_KEY", "")
+RAPIDAPI_KEY   = _ENV.get("RAPIDAPI_KEY", "")
 AWS_KEY_ID     = _ENV.get("AWS_ACCESS_KEY_ID", "")
 AWS_SECRET     = _ENV.get("AWS_SECRET_ACCESS_KEY", "")
 
@@ -449,7 +450,7 @@ def run_pipeline(job_id: str, url: str, params: dict, local_mp3_path: Optional[s
             log(f"Title: {info['title']} ({info['duration']}s)")
 
             step("Downloading audio...")
-            mp3_path = download_youtube_as_mp3(url)
+            mp3_path = download_youtube_as_mp3(url, api_key=RAPIDAPI_KEY)
             log(f"Downloaded: {mp3_path} ({os.path.getsize(mp3_path)/1e6:.1f} MB)")
             job["files"]["mp3"] = mp3_path
 
