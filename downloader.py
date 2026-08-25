@@ -57,7 +57,7 @@ def download_youtube_as_mp3(url: str, output_dir: str = "downloads", api_key: st
     }
 
     api_url = f"https://youtube-mp3-audio-video-downloader.p.rapidapi.com/get_mp3_download_link/{video_id}?quality=low&wait_until_the_file_is_ready=false"
-    response = requests.get(api_url, headers=headers, timeout=40)
+    response = requests.get(api_url, headers=headers, timeout=90)
     if response.status_code != 200:
         raise RuntimeError(f"API error: {response.status_code} {response.text}")
 
