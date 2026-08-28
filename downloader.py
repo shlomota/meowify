@@ -57,14 +57,30 @@ def download_youtube_as_mp3(url: str, output_dir: str = "downloads", api_key: st
     }
 
     api_url = f"https://youtube-mp3-audio-video-downloader.p.rapidapi.com/get_mp3_download_link/{video_id}?quality=low&wait_until_the_file_is_ready=false"
-    response = requests.get(api_url, headers=headers, timeout=90)
-    if response.status_code != 200:
-        raise RuntimeError(f"API error: {response.status_code} {response.text}")
 
-    data = response.json()
-    download_url = data.get('file') or data.get('reserved_file')
+    download_url = None
+    for attempt in range(2):
+        try:
+            response = requests.get(api_url, headers=headers, timeout=90)
+            if response.status_code != 200:
+                raise RuntimeError(f"API error: {response.status_code} {response.text}")
+
+            data = response.json()
+            download_url = data.get('file') or data.get('reserved_file')
+            if not download_url:
+                raise RuntimeError(f"No download URL in API response: {data}")
+            break
+        except requests.exceptions.Timeout as e:
+            if attempt == 0:
+                continue
+            raise RuntimeError(f"API timeout after {attempt + 1} attempts")
+        except Exception:
+            if attempt == 0:
+                continue
+            raise
+
     if not download_url:
-        raise RuntimeError(f"No download URL in API response: {data}")
+        raise RuntimeError("Failed to get download URL from API")
 
     for attempt in range(60):
         try:
