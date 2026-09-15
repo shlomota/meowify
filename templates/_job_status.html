@@ -64,9 +64,16 @@
       <audio controls class="w-100 mb-2">
         <source src="/files/{{ job_id }}/suno_{{ loop.index0 }}" type="audio/mpeg">
       </audio>
-      <a href="/files/{{ job_id }}/suno_{{ loop.index0 }}?dl=true" class="btn btn-sm btn-outline-primary">
-        Download track {{ loop.index }}
-      </a>
+      <div class="d-flex gap-2">
+        <a href="/files/{{ job_id }}/suno_{{ loop.index0 }}?dl=true" class="btn btn-sm btn-outline-primary">
+          Download track {{ loop.index }}
+        </a>
+        {% if track.youtube_url %}
+        <a href="{{ track.youtube_url }}" target="_blank" rel="noopener" class="btn btn-sm btn-outline-danger">
+          Watch on YouTube
+        </a>
+        {% endif %}
+      </div>
     </div>
   </div>
   {% endfor %}
