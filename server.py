@@ -990,7 +990,7 @@ def _upload_to_youtube_bg(job_id: str, track_idx: int):
         save_job(job_id, job)
 
         info = job.get("video_info") or {}
-        track_title = track.get("title", f"Track {track_idx + 1}")
+        track_title = f"{track.get('title', f'Track {track_idx + 1}')} - Meowified"
         yt_url = upload_to_youtube(
             track["path"],
             title=track_title,
