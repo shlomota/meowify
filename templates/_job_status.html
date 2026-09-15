@@ -82,7 +82,7 @@
 
       <div id="yt-status-{{ loop.index0 }}" class="yt-upload-status"
            hx-get="/job/{{ job_id }}/upload-youtube/status?track_idx={{ loop.index0 }}"
-           hx-trigger="load, yt-check from:body"
+           hx-trigger="load, every 1s"
            hx-swap="innerHTML">
       </div>
     </div>
