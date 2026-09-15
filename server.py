@@ -946,11 +946,9 @@ async def retry_upload(job_id: str, request: Request, audio: UploadFile = File(.
 
 def _upload_to_youtube_bg(job_id: str, track_idx: int):
     """Background task to upload to YouTube."""
-    # Ensure env is loaded
+    # Reload env vars - background threads may have stale values
     env = _load_env()
-    for k, v in env.items():
-        if k not in os.environ:
-            os.environ[k] = v
+    os.environ.update(env)
 
     job = JOBS.get(job_id) or load_job(job_id)
     if not job or not job.get("suno_tracks") or track_idx >= len(job["suno_tracks"]):
