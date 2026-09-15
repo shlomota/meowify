@@ -64,7 +64,7 @@
       <audio controls class="w-100 mb-2">
         <source src="/files/{{ job_id }}/suno_{{ loop.index0 }}" type="audio/mpeg">
       </audio>
-      <div class="d-flex gap-2">
+      <div class="d-flex gap-2 mb-2">
         <a href="/files/{{ job_id }}/suno_{{ loop.index0 }}?dl=true" class="btn btn-sm btn-outline-primary">
           Download track {{ loop.index }}
         </a>
@@ -78,6 +78,12 @@
           <button type="submit" class="btn btn-sm btn-outline-danger">Upload to YouTube</button>
         </form>
         {% endif %}
+      </div>
+
+      <div id="yt-status-{{ loop.index0 }}" class="yt-upload-status"
+           hx-get="/job/{{ job_id }}/upload-youtube/status?track_idx={{ loop.index0 }}"
+           hx-trigger="load, yt-check from:body"
+           hx-swap="innerHTML">
       </div>
     </div>
   </div>
