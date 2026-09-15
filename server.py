@@ -1062,6 +1062,8 @@ async def upload_youtube_status(job_id: str, request: Request, track_idx: int = 
     # Return HTML
     if yt_url:
         html = f'<small class="text-success">✓ <a href="{yt_url}" target="_blank">Watch on YouTube</a></small>'
+        # Reload page to show YouTube button
+        html += '<script>setTimeout(() => window.location.reload(), 500);</script>'
     elif status == "idle":
         html = ""
     elif status == "error":
