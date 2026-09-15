@@ -72,6 +72,11 @@
         <a href="{{ track.youtube_url }}" target="_blank" rel="noopener" class="btn btn-sm btn-outline-danger">
           Watch on YouTube
         </a>
+        {% else %}
+        <form method="post" action="/job/{{ job_id }}/upload-youtube" class="d-inline">
+          <input type="hidden" name="track_idx" value="{{ loop.index0 }}">
+          <button type="submit" class="btn btn-sm btn-outline-danger">Upload to YouTube</button>
+        </form>
         {% endif %}
       </div>
     </div>
