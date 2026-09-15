@@ -959,13 +959,29 @@ async def upload_youtube(job_id: str, request: Request, track_idx: int = Form(0)
 
     track = job["suno_tracks"][track_idx]
     try:
-        # Edit album art if we have a thumbnail
-        thumbnail_url = (job.get("video_info") or {}).get("thumbnail_url", "")
+        # Get high-res thumbnail and edit it
+        video_info = job.get("video_info") or {}
+        video_id = video_info.get("id", "")
         edited_cover_path = None
-        if thumbnail_url:
-            edited_cover_path = edit_album_art(thumbnail_url, OPENAI_API_KEY)
 
-        # Upload track
+        if video_id:
+            # Try high-res thumbnails in order of preference
+            for quality in ["maxresdefault", "sddefault", "hqdefault", "mqdefault"]:
+                thumb_url = f"https://img.youtube.com/vi/{video_id}/{quality}.jpg"
+                try:
+                    resp = http_requests.head(thumb_url, timeout=5)
+                    if resp.status_code == 200:
+                        logger.info(f"Using {quality} thumbnail")
+                        edited_cover_path = edit_album_art(thumb_url, OPENAI_API_KEY)
+                        break
+                except Exception as e:
+                    logger.info(f"Could not get {quality} thumbnail: {e}")
+                    continue
+
+        if not edited_cover_path:
+            raise RuntimeError("Could not download and edit album art")
+
+        # Upload video with edited thumbnail
         info = job.get("video_info") or {}
         track_title = track.get("title", f"Track {track_idx + 1}")
         yt_url = upload_to_youtube(
