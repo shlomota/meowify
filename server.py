@@ -455,6 +455,7 @@ def run_pipeline(job_id: str, url: str, params: dict, local_mp3_path: Optional[s
             job["files"]["mp3"] = mp3_path
 
         base      = os.path.splitext(os.path.basename(mp3_path))[0]
+        base_short = base[:50] if len(base) > 50 else base
         full_song = params["full_song"]
         chorus_dur = params["chorus_dur"]
 
@@ -588,7 +589,7 @@ def run_pipeline(job_id: str, url: str, params: dict, local_mp3_path: Optional[s
                 for i, track in enumerate(tracks, 1):
                     audio_url = track.get("audioUrl") or track.get("streamAudioUrl", "")
                     if not audio_url: continue
-                    out = os.path.join(OUTPUT_DIR, f"{base}_suno_{i}.mp3")
+                    out = os.path.join(OUTPUT_DIR, f"{base_short}_{i}.mp3")
                     dl_file(audio_url, out)
                     job["suno_tracks"].append({"path": out, "title": track.get("title", f"Track {i}")})
                     log(f"Track {i}: {out}")
