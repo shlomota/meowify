@@ -589,7 +589,7 @@ def run_pipeline(job_id: str, url: str, params: dict, local_mp3_path: Optional[s
                 for i, track in enumerate(tracks, 1):
                     audio_url = track.get("audioUrl") or track.get("streamAudioUrl", "")
                     if not audio_url: continue
-                    out = os.path.join(OUTPUT_DIR, f"{base_short}_{i}.mp3")
+                    out = os.path.join(OUTPUT_DIR, f"{base_short}_suno_{i}.mp3")
                     dl_file(audio_url, out)
                     job["suno_tracks"].append({"path": out, "title": track.get("title", f"Track {i}")})
                     log(f"Track {i}: {out}")
