@@ -127,12 +127,19 @@ def upload_to_youtube(mp3_path: str, title: str, description: str, refresh_token
         if not video_id:
             raise RuntimeError(f"YouTube upload failed: {response}")
 
-        return f"https://youtube.com/watch?v={video_id}"
+        yt_url = f"https://youtube.com/watch?v={video_id}"
 
-    finally:
-        # Clean up temp video file
+        # Clean up temp video file after successful upload
         if os.path.exists(video_path):
             os.remove(video_path)
+
+        return yt_url
+
+    except Exception as e:
+        # Clean up on error too
+        if os.path.exists(video_path):
+            os.remove(video_path)
+        raise
 
 
 if __name__ == "__main__":

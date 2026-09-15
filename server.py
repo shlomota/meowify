@@ -993,6 +993,10 @@ async def upload_youtube(job_id: str, request: Request, track_idx: int = Form(0)
             tags=["meow", "cover", "suno"]
         )
 
+        # Clean up edited image file after successful upload
+        if edited_cover_path and os.path.exists(edited_cover_path):
+            os.remove(edited_cover_path)
+
         # Store URL
         track["youtube_url"] = yt_url
         save_job(job_id, job)
@@ -1001,6 +1005,12 @@ async def upload_youtube(job_id: str, request: Request, track_idx: int = Form(0)
         return RedirectResponse(f"/job/{job_id}", status_code=303)
 
     except Exception as e:
+        # Clean up on error
+        if edited_cover_path and os.path.exists(edited_cover_path):
+            try:
+                os.remove(edited_cover_path)
+            except:
+                pass
         logger.error(f"YouTube upload failed: {e}")
         raise HTTPException(500, f"Upload failed: {str(e)}")
 
