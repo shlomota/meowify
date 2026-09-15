@@ -4,7 +4,7 @@ import requests
 import time
 
 
-def edit_album_art(image_url: str, kie_key: str, timeout: int = 300) -> str:
+def edit_album_art(image_url: str, kie_key: str, timeout: int = 600) -> str:
     """Edit album art: replace people with cartoon cats, add logo.
 
     Returns: URL to edited image
@@ -38,9 +38,14 @@ def edit_album_art(image_url: str, kie_key: str, timeout: int = 300) -> str:
     if response.status_code != 200:
         raise RuntimeError(f"KIE API error: {response.status_code} {response.text}")
 
-    data = response.json()
-    job_id = data.get("id")
-    download_url = data.get("result", {}).get("output_url")
+    response_data = response.json()
+
+    if response_data.get("code") != 200:
+        raise RuntimeError(f"KIE API error: {response_data.get('msg')}")
+
+    data = response_data.get("data", {})
+    job_id = data.get("taskId") or data.get("recordId")
+    download_url = data.get("output_url")
 
     if not job_id:
         raise RuntimeError(f"No job ID in response: {data}")
@@ -52,25 +57,29 @@ def edit_album_art(image_url: str, kie_key: str, timeout: int = 300) -> str:
     # Poll for completion
     start = time.time()
     while time.time() - start < timeout:
-        time.sleep(2)
+        time.sleep(3)
 
         status_response = requests.get(
-            f"https://api.kie.ai/api/v1/jobs/getTask/{job_id}",
+            f"https://api.kie.ai/api/v1/jobs/getRecord/{job_id}",
             headers=headers,
             timeout=10
         )
 
         if status_response.status_code == 200:
             status_data = status_response.json()
-            result = status_data.get("result", {})
-            output_url = result.get("output_url")
 
-            if output_url:
-                return output_url
+            if status_data.get("code") == 200:
+                result = status_data.get("data", {})
+                output_url = result.get("output_url")
 
-            status = status_data.get("status")
-            if status in ["failed", "error"]:
-                raise RuntimeError(f"Image edit failed: {status_data}")
+                if output_url:
+                    return output_url
+
+                status = result.get("status")
+                if status in ["failed", "error"]:
+                    raise RuntimeError(f"Image edit failed: {result}")
+            else:
+                raise RuntimeError(f"KIE API error: {status_data.get('msg')}")
 
     raise RuntimeError(f"Image edit timeout after {timeout}s")
 
