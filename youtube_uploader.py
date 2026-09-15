@@ -10,12 +10,19 @@ from googleapiclient.http import MediaFileUpload
 
 def get_youtube_service(refresh_token):
     """Get YouTube API service using refresh token."""
+    import os
+    client_id = os.getenv("GOOGLE_CLIENT_ID")
+    client_secret = os.getenv("GOOGLE_CLIENT_SECRET")
+
+    if not client_id or not client_secret:
+        raise RuntimeError("GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET required")
+
     creds = Credentials(
         token=None,
         refresh_token=refresh_token,
         token_uri="https://oauth2.googleapis.com/token",
-        client_id=os.getenv("GOOGLE_CLIENT_ID"),
-        client_secret=os.getenv("GOOGLE_CLIENT_SECRET")
+        client_id=client_id,
+        client_secret=client_secret
     )
     creds.refresh(Request())
     return build("youtube", "v3", credentials=creds)

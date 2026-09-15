@@ -28,3 +28,4 @@ users.db
 # IDE
 .idea/
 .claude/
+youtube_credentials.json
